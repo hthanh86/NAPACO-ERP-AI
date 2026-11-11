@@ -4,9 +4,11 @@ import urllib.parse
 from cryptography.fernet import Fernet
 from sqlalchemy import select,func
 from fastapi import HTTPException
-from app.models import User,Order
-from app.google_models import GoogleCredential
-from app import google_oauth,google_drive,legacy_api
+from app.auth.models import User
+from app.modules.orders.models import Order
+from app.integrations.google.models import GoogleCredential
+from app.integrations.google import oauth as google_oauth, drive as google_drive
+from app.compatibility import api as legacy_api
 from test_legacy import RPC,web_order
 
 

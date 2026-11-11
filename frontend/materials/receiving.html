@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { font: 14px 'Segoe UI', Roboto, Arial, sans-serif; color: #0f172a; }
+    main { min-width: 0; padding: 20px; }
+    h1, h2 { color: #1e3a5f; margin: 0 0 12px; }
+    h1 { font-size: 22px; }
+    h2 { font-size: 18px; }
+    .toolbar, .fields { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+    .toolbar h1 { margin: 0 auto 0 0; }
+    .panel { margin: 12px 0; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: white; }
+    .table-scroll { overflow: auto; margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 8px; border-bottom: 1px solid #e2e8f0; }
+    th { color: #1e40af; background: #eff6ff; white-space: nowrap; }
+    label { display: grid; gap: 4px; }
+    input, select, textarea, button { font: inherit; border: 1px solid #cbd5e1; border-radius: 5px; padding: 6px 8px; color: inherit; background: white; }
+    button { cursor: pointer; white-space: nowrap; }
+    button:disabled { opacity: .55; cursor: default; }
+    .primary { background: #2563eb; color: white; border-color: #2563eb; }
+    fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+    .po-heading th { background: #dbeafe; color: #1e3a5f; }
+    .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .error { color: #991b1b; }
+    .excess { color: #b91c1c; font-weight: 600; }
+    #message:empty { display: none; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body class="erp-shell">
+  <?!= renderOrderMenu_(appUrl, 'film-receive') ?>
+  <main>
+    <div class="toolbar">
+      <h1>Nhận Màng</h1>
+      <button id="reload" type="button">Tải lại</button>
+    </div>
+    <p id="message" role="status"></p>
+    <form id="form" class="panel" hidden>
+      <fieldset id="fields">
+        <h2 id="selected"></h2>
+        <div class="fields">
+          <label>Ngày nhận<input name="date" type="date" required></label>
+          <label>Ngày sản xuất<input name="productionDate" type="date"></label>
+          <label>Số cuộn<input name="rolls" type="number" min="1" step="1" required></label>
+          <label>Số kg nhận<input name="kg" inputmode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="VD 125,5" required></label>
+          <label>Vị trí<input name="location"></label>
+          <label>Trạng thái<select name="quality"><option>OK</option><option>NG</option></select></label>
+        </div>
+        <p><label>Ghi chú<textarea name="note" rows="2"></textarea></label></p>
+        <p id="preview" aria-live="polite"></p>
+        <button class="primary" type="submit">Lưu Tạm</button>
+        <button id="cancel" type="button">Bỏ chọn</button>
+      </fieldset>
+    </form>
+    <section id="drafts" class="panel" hidden>
+      <div class="toolbar">
+        <h2 id="draftTitle">Danh sách lưu tạm</h2>
+        <button id="saveAll" class="primary" type="button">Lưu Tổng</button>
+      </div>
+      <p>Các dòng lưu tạm chỉ có trong màn hình này. Bấm Lưu Tổng để ghi vào kho.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>PO / DN</th><th>Quy cách</th><th>Ngày nhận</th><th>Số cuộn</th><th>Nhận (KG)</th><th>Vị trí</th><th>Trạng thái / Ghi chú</th><th></th></tr></thead>
+          <tbody id="draftRows"></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="list" class="panel" hidden>
+      <label>Tìm quy cách<input id="search" type="search" placeholder="PO, DN, quy cách, khách hàng, sản phẩm"></label>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Khách hàng / Sản phẩm</th><th>Quy cách</th><th>Trạng thái</th><th>Đặt (KG)</th><th>Đã nhận (KG)</th><th>Còn lại / Dư (KG)</th><th></th></tr></thead>
+          <tbody id="lines"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const form = $('form');
+  const field = name => form.elements.namedItem(name);
+  const format = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 8 });
+  const drafts = new Map();
+  let data, selected, token, busy, customProductionDate;
+
+  function message(text, error = false) {
+    $('message').textContent = text;
+    $('message').classList.toggle('error', error);
+  }
+
+  function preview() {
+    const added = Number(field('kg').value.replace(',', '.'));
+    const received = selected.received + (Number.isFinite(added) && added > 0 ? added : 0);
+    const difference = selected.ordered - received;
+    const excess = difference < -1e-8;
+    const amount = document.createElement('span');
+    amount.textContent = format.format(excess ? -difference : Math.max(0, difference));
+    amount.classList.toggle('excess', excess);
+    $('preview').replaceChildren('Đã nhận ' + format.format(received) + ' KG · ' +
+      (excess ? 'Dư ' : 'Còn lại '), amount, ' KG');
+  }
+
+  function previousDay(value) {
+    if (!value) return '';
+    const date = new Date(value + 'T00:00:00Z');
+    date.setUTCDate(date.getUTCDate() - 1);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function choose(line) {
+    selected = line;
+    form.reset();
+    field('kg').setCustomValidity('');
+    field('productionDate').setCustomValidity('');
+    field('date').value = data.today;
+    const draft = drafts.get(line.id);
+    customProductionDate = draft?.customProductionDate || false;
+    field('productionDate').value = previousDay(data.today);
+    if (draft) {
+      for (const [name, value] of Object.entries(draft.entry)) {
+        const control = field(name);
+        if (control) control.value = value;
+      }
+    }
+    $('selected').textContent = line.po + ' · ' + line.id + ' · ' + line.spec;
+    form.hidden = false;
+    validateNote();
+    preview();
+    renderDrafts();
+    field('kg').focus();
+  }
+
+  function action(label, click) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.onclick = click;
+    return button;
+  }
+
+  function render() {
+    const terms = $('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const body = $('lines');
+    body.replaceChildren();
+    const groups = new Map();
+    for (const line of data.lines) {
+      const searchable = [line.id, line.po, line.supplier, line.spec, ...line.customerProducts].join(' ').toLowerCase();
+      if (!terms.every(term => searchable.includes(term))) continue;
+      if (!groups.has(line.po)) groups.set(line.po, []);
+      groups.get(line.po).push(line);
+    }
+    for (const [po, lines] of groups) {
+      const heading = body.insertRow();
+      heading.className = 'po-heading';
+      const cell = document.createElement('th');
+      cell.colSpan = 7;
+      cell.textContent = [po, lines[0].supplier].filter(Boolean).join(' · ');
+      heading.append(cell);
+      for (const line of lines) {
+        const row = body.insertRow();
+        const customerProduct = row.insertCell();
+        for (const label of line.customerProducts.length ? line.customerProducts : ['Chưa gán đơn']) {
+          const name = document.createElement('div');
+          name.textContent = label;
+          customerProduct.append(name);
+        }
+        const dn = document.createElement('small');
+        dn.textContent = line.id;
+        customerProduct.append(dn);
+        [line.spec, line.status, format.format(line.ordered),
+          format.format(line.received)].forEach(value => { row.insertCell().textContent = value; });
+        const difference = line.ordered - line.received;
+        const excess = difference < -1e-8;
+        const balanceCell = row.insertCell();
+        balanceCell.textContent = format.format(excess ? -difference : Math.max(0, difference));
+        balanceCell.classList.toggle('excess', excess);
+        if (excess) balanceCell.title = 'Giao dư';
+        row.insertCell().append(action(drafts.has(line.id) ? 'Sửa lưu tạm' : 'Chọn nhận', () => choose(line)));
+      }
+    }
+    if (!body.rows.length) {
+      const cell = body.insertRow().insertCell();
+      cell.colSpan = 7;
+      cell.textContent = 'Không có quy cách chờ nhận phù hợp.';
+    }
+  }
+
+  function renderDrafts() {
+    $('drafts').hidden = drafts.size === 0;
+    $('draftTitle').textContent = 'Danh sách lưu tạm (' + drafts.size + ')';
+    $('saveAll').disabled = busy || !form.hidden || !drafts.size;
+    const body = $('draftRows');
+    body.replaceChildren();
+    for (const [dn, { line, entry }] of drafts) {
+      const row = body.insertRow();
+      [line.po + ' / ' + dn, line.spec, entry.date, entry.rolls, format.format(Number(entry.kg.replace(',', '.'))),
+        entry.location, [entry.quality, entry.note].filter(Boolean).join(' · ')]
+        .forEach(value => { row.insertCell().textContent = value; });
+      const controls = row.insertCell();
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const latest = data.lines.find(candidate => candidate.id === dn);
+      const edit = action('Sửa', () => choose(latest));
+      edit.disabled = !latest;
+      actions.append(edit, action('Bỏ', () => {
+        drafts.delete(dn);
+        token = null;
+        if (selected?.id === dn) form.hidden = true;
+        render();
+        renderDrafts();
+      }));
+      controls.append(actions);
+    }
+  }
+
+  function setBusy(value) {
+    busy = value;
+    $('reload').disabled = value;
+    $('fields').disabled = value;
+    $('list').inert = value;
+    $('drafts').inert = value;
+    $('saveAll').disabled = value || !form.hidden || !drafts.size;
+  }
+
+  function load(success) {
+    form.hidden = true;
+    $('list').hidden = true;
+    setBusy(true);
+    message(success || 'Đang tải quy cách chờ nhận…');
+    google.script.run.withSuccessHandler(result => {
+      data = result;
+      render();
+      renderDrafts();
+      $('list').hidden = false;
+      setBusy(false);
+      message(success || '');
+    }).withFailureHandler(error => {
+      setBusy(false);
+      message((success ? success + ' ' : '') + error.message, true);
+    }).getFilmReceiptLines();
+  }
+
+  field('kg').oninput = () => {
+    field('kg').setCustomValidity('');
+    preview();
+  };
+  field('date').oninput = () => {
+    if (!customProductionDate) field('productionDate').value = previousDay(field('date').value);
+    field('productionDate').setCustomValidity('');
+  };
+  field('productionDate').oninput = () => {
+    customProductionDate = true;
+    field('productionDate').setCustomValidity('');
+  };
+  function validateNote() {
+    const note = field('note');
+    note.required = field('quality').value === 'NG';
+    note.setCustomValidity(note.required && !note.value.trim() ? 'Nhập ghi chú cho hàng NG.' : '');
+  }
+  field('quality').onchange = validateNote;
+  field('note').oninput = validateNote;
+  $('search').oninput = render;
+  $('reload').onclick = () => load();
+  $('cancel').onclick = () => {
+    form.hidden = true;
+    renderDrafts();
+  };
+  form.onsubmit = event => {
+    event.preventDefault();
+    if (busy) return;
+    const entry = Object.fromEntries(new FormData(form));
+    if (!(Number(entry.kg.replace(',', '.')) > 0) || !Number.isFinite(Number(entry.kg.replace(',', '.')))) {
+      field('kg').setCustomValidity('Nhập số kg lớn hơn 0.');
+      form.reportValidity();
+      return;
+    }
+    if (entry.productionDate && entry.productionDate > entry.date) {
+      field('productionDate').setCustomValidity('Ngày sản xuất phải trước hoặc bằng ngày nhận.');
+      form.reportValidity();
+      return;
+    }
+    Object.assign(entry, { dn: selected.id, received: selected.received, ordered: selected.ordered });
+    drafts.set(selected.id, { line: selected, entry, customProductionDate });
+    token = null;
+    form.hidden = true;
+    render();
+    renderDrafts();
+    message('Đã lưu tạm ' + selected.id + '.');
+  };
+  $('saveAll').onclick = () => {
+    if (busy || !form.hidden || !drafts.size) return;
+    token ||= crypto.randomUUID();
+    const receipts = Array.from(drafts.values(), draft => draft.entry);
+    setBusy(true);
+    message('Đang lưu ' + receipts.length + ' phiếu nhận…');
+    google.script.run.withSuccessHandler(result => {
+      drafts.clear();
+      token = null;
+      renderDrafts();
+      load('Đã lưu ' + result.ids.length + ' phiếu: ' + result.ids.join(', ') + '.');
+    }).withFailureHandler(error => {
+      setBusy(false);
+      message(error.message, true);
+    }).saveFilmReceipts({ token, receipts });
+  };
+  load();
+})();
+</script>
+</body>
+</html>

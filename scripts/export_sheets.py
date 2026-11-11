@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def export():
-    config = json.loads((ROOT / 'source-appscript/schema.json').read_text())
+    config = json.loads((ROOT / 'backend/app/core/legacy_schema.json').read_text())
     auth = json.loads((Path.home() / '.clasprc.json').read_text())['tokens']['default']
     data = urllib.parse.urlencode({k: auth[k] for k in ('client_id', 'client_secret', 'refresh_token')}
                                  | {'grant_type': 'refresh_token'}).encode()

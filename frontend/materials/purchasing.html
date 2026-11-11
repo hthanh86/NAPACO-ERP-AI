@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>NAPACO ERP - Nguyên Liệu</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font: 14px 'Segoe UI', Roboto, -apple-system, Arial, sans-serif; color: #0f172a; }
+    main { min-width: 0; padding: 20px; }
+    h1, h2 { margin: 0; color: #1e3a5f; }
+    h1 { font-size: 22px; }
+    h2 { font-size: 18px; }
+    .toolbar, .fields { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    .toolbar h1, .toolbar h2 { margin-right: auto; align-self: center; }
+    .panel { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 14px; }
+    .table-scroll { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    th { background: #eff6ff; color: #1e40af; white-space: nowrap; }
+    tr:hover td { background: #f8fafc; }
+    .fields label { display: grid; gap: 4px; }
+    .fields .order-note { width: min(100%, 360px); }
+    input, select, textarea, button { font: inherit; padding: 6px 8px; border-radius: 5px; border: 1px solid #cbd5e1; background: #fff; color: inherit; }
+    input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid #93c5fd; }
+    button { cursor: pointer; white-space: nowrap; }
+    button.primary { background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 600; }
+    button:disabled { opacity: .55; cursor: default; }
+    .grid input, .grid select { width: 100%; min-width: 78px; }
+    .grid .size { min-width: 112px; }
+    .grid .note { width: 100%; min-width: 220px; resize: vertical; }
+    .line-orders { margin: 6px 0; }
+    .line-orders input[type="search"] { width: min(100%, 540px); }
+    .grid .priced { background: #fef9c3; }
+    .muted { color: #475569; }
+    .notice { background: #fffbeb; color: #92400e; padding: 9px; border-radius: 5px; }
+    #message:empty, #setup:empty { display: none; }
+    .error { color: #991b1b; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .chip { border-radius: 12px; background: #eaf1fc; color: #1e40af; padding: 5px 9px; }
+    .choices { max-height: 190px; overflow: auto; margin-top: 5px; }
+    .choices label { display: block; padding: 4px; }
+    .choices input { width: auto; min-width: 0; }
+    summary { cursor: pointer; color: #1e40af; }
+    details > input { margin-top: 5px; }
+    tfoot td { border: 0; padding-top: 12px; font-weight: 700; }
+    .reference-panel { margin-bottom: 14px; }
+    .reference-panel > summary { font-weight: 600; }
+    .reference-content { margin-top: 12px; }
+    .reference-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+    .reference-columns > section { min-width: 0; }
+    .reference-columns h3 { margin: 0 0 10px; }
+    .reference-columns li { margin-bottom: 8px; }
+    .history-highlight { background: #fef08a; padding: 1px 4px; border-radius: 3px; }
+    .calculated-kg { color: #b91c1c; }
+    .delivery-actions { position: relative; height: 38px; overflow: hidden; }
+    #applyDelivery { position: absolute; top: 0; }
+    .po-heading th { background: #dbeafe; color: #1e3a5f; white-space: normal; }
+    .po-heading .toolbar { margin: 0; align-items: center; justify-content: space-between; }
+    .action-link { display: inline-block; padding: 6px 8px; border-radius: 5px; background: #2563eb; color: #fff; text-decoration: none; }
+    @media (max-width: 840px) { .reference-columns { grid-template-columns: 1fr; } }
+    .dimensions { display: grid; grid-template-columns: repeat(2, minmax(0, 210px)); gap: 8px 10px; margin-bottom: 12px; }
+    .dimensions label { display: grid; gap: 4px; }
+    .dimensions input { width: 100%; }
+    dialog { width: min(900px, 95vw); max-height: 90vh; border: 1px solid #cbd5e1; border-radius: 8px; }
+    dialog::backdrop { background: #0f172a66; }
+    .link-button { border: 0; padding: 0; color: #1d4ed8; text-decoration: underline; background: transparent; }
+    .excess { color: #b91c1c; font-weight: 600; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body class="erp-shell">
+  <?!= renderOrderMenu_(appUrl, filmMode) ?>
+  <main id="filmPage" data-mode="<?= filmMode ?>" data-copy="<?= copyIds ?>">
+    <div class="toolbar">
+      <h1 id="pageTitle">Màng Đã Đặt</h1>
+      <button type="button" id="reload">Tải lại</button>
+      <a id="copyOrder" class="action-link" href="<?= appUrl ?>?view=film-create" hidden>Tạo đơn từ quy cách đã chọn</a>
+      <a id="filmListLink" href="<?= appUrl ?>?view=film" hidden>Màng Đã Đặt</a>
+    </div>
+    <p id="message" role="status"></p>
+    <p id="setup" class="notice"></p>
+    <section id="list" class="panel" hidden>
+      <div id="counts" class="chips"></div>
+      <form id="filmSearch" class="fields">
+        <label>Tìm đơn hoặc mã vật liệu<input id="search" type="search" placeholder="PO, DN, quy cách, khách hàng, sản phẩm"></label>
+        <label>Nhà cung cấp<select id="supplierFilter"></select></label>
+        <label>Trạng thái<select id="progressFilter"></select></label>
+        <label>Từ ngày<input type="date" id="dateFrom"></label>
+        <label>Đến ngày<input type="date" id="dateTo"></label>
+        <button id="searchButton" type="submit">Tìm kiếm</button>
+      </form>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Chọn</th><th>Khách hàng / Sản phẩm</th><th>Quy cách</th><th>Đặt (KG)</th><th>Đã nhận (KG)</th><th>Ngày giao</th><th>Trạng thái</th></tr></thead>
+          <tbody id="orders"></tbody>
+        </table>
+      </div>
+    </section>
+    <form id="editor" class="panel" novalidate hidden>
+      <fieldset id="editorFields" style="border:0;padding:0;margin:0;min-width:0">
+        <div class="toolbar">
+          <h2 id="editorTitle"></h2>
+          <button type="button" id="close">Về danh sách</button>
+        </div>
+        <details id="referencePanel" class="panel reference-panel" hidden>
+          <summary>Tra sản phẩm và tính kg đặt màng</summary>
+          <div class="reference-content reference-columns">
+            <section>
+              <h3>Tính theo công thức</h3>
+              <div class="fields" id="moldChoice" hidden>
+                <label>Khuôn định hình<select id="referenceMold"></select></label>
+              </div>
+              <div class="dimensions">
+                <label>Rộng khuôn (mm)<input id="moldWidth" inputmode="decimal"></label>
+                <label>Dài khuôn (mm)<input id="moldLength" inputmode="decimal"></label>
+                <label>Khổ màng (mm)<input id="filmWidth" inputmode="decimal"></label>
+                <label>Dài màng (mm)<input id="filmLength" inputmode="decimal"></label>
+              </div>
+              <div class="fields">
+                <label>Cavity<input id="moldCavity" inputmode="numeric"></label>
+                <label>Số sản phẩm cần làm<input id="productQty" inputmode="numeric"></label>
+                <label>Loại nhựa<input id="calcResin" list="resinTypes"></label>
+                <label>Tỷ trọng<input id="calcDensity" inputmode="decimal" list="densityOptions"></label>
+                <label>Độ dày (mm)<input id="calcThickness" inputmode="decimal"></label>
+                <label>NG (%)<input id="calcNg" inputmode="decimal" list="ngOptions" value="3"></label>
+                <datalist id="densityOptions"></datalist>
+                <datalist id="ngOptions"><option value="3">3%</option><option value="5">5%</option></datalist>
+              </div>
+              <p id="calculation" role="status"></p>
+              <div class="fields">
+                <label>Áp dụng vào dòng số<select id="referenceTarget"></select></label>
+                <button type="button" id="applyCalculation" class="primary" disabled>Áp dụng quy cách đã tính</button>
+              </div>
+            </section>
+            <section>
+              <div class="fields">
+                <label>Sản phẩm<input id="referenceProduct" list="referenceProducts" placeholder="Gõ tên hoặc mã sản phẩm" autocomplete="off"></label>
+                <datalist id="referenceProducts"></datalist>
+              </div>
+              <p id="referenceMessage" role="status"></p>
+              <h3>Lịch sử đặt màng</h3>
+              <div id="productHistory"></div>
+            </section>
+          </div>
+        </details>
+        <h2>Thông tin đặt màng</h2>
+        <div class="fields">
+          <label>Ngày đặt<input id="orderDate" type="date" required></label>
+          <label>Nhà cung cấp<select id="supplier" required></select></label>
+          <label class="order-note">Ghi chú chung<input id="orderNote"></label>
+        </div>
+        <div id="deliveryActions" class="delivery-actions">
+          <button id="applyDelivery" type="button" hidden>Áp dụng hết</button>
+        </div>
+        <div id="lineScroll" class="table-scroll">
+          <table class="grid">
+            <thead><tr><th>STT</th><th>Loại nhựa</th><th>Cấp độ</th><th>Màu sắc</th><th>Tĩnh điện</th><th>Quy cách</th><th>Đơn giá</th><th>Số lượng (kg)</th><th>Ghi chú</th><th id="deliveryHeading">Ngày giao</th><th id="receivedHeading">Đã nhận / Còn lại</th><th id="statusHeading">Trạng thái</th><th></th></tr></thead>
+            <tbody id="lines"></tbody>
+            <tfoot><tr><td colspan="13" id="total"></td></tr></tfoot>
+          </table>
+        </div>
+        <datalist id="resinTypes"></datalist>
+        <datalist id="sizes"></datalist>
+        <div class="toolbar">
+          <button type="button" id="add">+ Thêm quy cách</button>
+          <button type="submit" id="save" class="primary">Lưu đơn</button>
+        </div>
+      </fieldset>
+    </form>
+    <dialog id="receiptDialog" aria-labelledby="receiptTitle">
+      <div class="toolbar"><h2 id="receiptTitle">Lịch sử nhận màng</h2><button type="button" id="closeReceipt">Đóng</button></div>
+      <p id="receiptMessage" role="status"></p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Ngày nhận</th><th>Mã phiếu</th><th>Số cuộn</th><th>KG</th><th>Trạng thái</th></tr></thead>
+          <tbody id="receiptHistory"></tbody>
+        </table>
+      </div>
+    </dialog>
+  </main>
+<script>
+  const $ = id => document.getElementById(id);
+  const createPage = $('filmPage').dataset.mode === 'film-create';
+  let requestedCopies = $('filmPage').dataset.copy.split(',').filter(Boolean);
+  const selectedLines = new Set();
+  const createUrl = $('copyOrder').href;
+  $('pageTitle').textContent = createPage ? 'Tạo Đơn Đặt Màng' : 'Màng Đã Đặt';
+  $('reload').hidden = $('close').hidden = createPage;
+  $('filmListLink').hidden = !createPage;
+  const esd = [['', ''], ['10^6-10^9', '10^6-10^9'], ['10^9-10^11', '10^9-10^11']];
+  let grades = [];
+  let densities = new Map();
+  const quantityFormat = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 20 });
+  const number = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 3 });
+  let data;
+  let materialOptions;
+  let materialColors = [];
+  let defaultDelivery;
+  let originalHeader;
+  let deliverySource;
+  let deliveryHideTimer;
+  let newAssignmentChoices = null;
+  let current;
+  let lineForms = [];
+  let token;
+  let busy = false;
+  let readOnly = false;
+
+  function node(tag, text) {
+    const el = document.createElement(tag);
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  function options(select, items) {
+    select.replaceChildren(...items.map(([id, name]) => new Option(name, id)));
+  }
+
+  function message(value, error = false) {
+    $('message').textContent = value;
+    $('message').classList.toggle('error', error);
+  }
+
+  function setBusy(value) {
+    busy = value;
+    $('reload').disabled = value;
+    $('searchButton').disabled = value;
+    $('editorFields').disabled = value;
+    $('orders').inert = value;
+    updateCopyLink();
+  }
+
+  function updateCopyLink() {
+    const link = $('copyOrder');
+    link.hidden = createPage || busy || $('list').hidden || !data?.permissions.create || !selectedLines.size;
+    const url = new URL(createUrl);
+    url.searchParams.set('copy', [...selectedLines].join(','));
+    link.href = url.href;
+    link.textContent = 'Tạo đơn (' + selectedLines.size + ')';
+  }
+
+  function load(successMessage) {
+    setBusy(true);
+    message('Đang tải dữ liệu…');
+    const filters = createPage ? { create: true, copyIds: requestedCopies, formData: true } : {
+      search: $('search').value, supplier: $('supplierFilter').value, status: $('progressFilter').value,
+      from: $('dateFrom').value, to: $('dateTo').value
+    };
+    google.script.run.withFailureHandler(error => {
+      setBusy(false);
+      message(error.message, true);
+    }).withSuccessHandler(result => {
+      data = result;
+      $('setup').textContent = [data.setup.length ? 'Chỉ tra cứu. ' + data.setup.join(' ') : '',
+        data.receiptWarning].filter(Boolean).join(' ');
+      setBusy(false);
+      if (createPage) {
+        if (!data.setup.length) loadEditor(null, false, successMessage, result.formData);
+        else message('Chưa thể tạo đơn khi cấu trúc dữ liệu chưa đầy đủ.', true);
+        return;
+      }
+      const { po: poColumns, supplier: supplierColumns } = data.fields;
+      const supplier = $('supplierFilter').value;
+      const status = $('progressFilter').value;
+      const suppliers = new Map(data.suppliers.map(row => [row[supplierColumns.ID], row[supplierColumns.NAME]]));
+      data.orders.forEach(order => {
+        const id = order[poColumns.SUPPLIER];
+        if (id && !suppliers.has(id)) suppliers.set(id, id);
+      });
+      if (supplier && !suppliers.has(supplier)) suppliers.set(supplier, supplier);
+      options($('supplierFilter'), [['', 'Tất cả'], ...suppliers]);
+      $('supplierFilter').value = supplier;
+      options($('progressFilter'), [['', 'Tất cả'], ...data.filterStatuses.map(value => [value, value])]);
+      if (data.filterStatuses.includes(status)) $('progressFilter').value = status;
+      selectedLines.clear();
+      message(successMessage || '');
+      showList();
+    }).getFilmOrders(filters);
+  }
+
+  function kg(value) {
+    return value == null ? '—' : number.format(value);
+  }
+
+  function openStoredOrder(id) {
+    if (busy) return;
+    setBusy(true);
+    message('Đang tải toàn bộ quy cách của PO…');
+    google.script.run.withFailureHandler(error => {
+      setBusy(false);
+      message(error.message, true);
+    }).withSuccessHandler(result => {
+      setBusy(false);
+      const order = result.orders[0];
+      if (!order) return message('Không tìm thấy PO.', true);
+      const edit = result.permissions.edit && !order.legacy && !result.setup.length &&
+        result.canEditWithReceipts && order[result.fields.po.STATUS] !== 'Hủy';
+      loadEditor(order, !edit, undefined, result.formData);
+    }).getFilmOrders({ orderId: id, formData: true });
+  }
+
+  function showList() {
+    newAssignmentChoices = null;
+    referenceRequest++;
+    $('editor').hidden = true;
+    $('list').hidden = false;
+    if (!data) return;
+    const { po, line: col, material, supplier } = data.fields;
+    const supplierNames = new Map(data.suppliers.map(item => [item[supplier.ID], item[supplier.NAME]]));
+    const body = $('orders');
+    body.replaceChildren();
+    const terms = $('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const selectedSupplier = $('supplierFilter').value;
+    const selectedStatus = $('progressFilter').value;
+    const from = $('dateFrom').value;
+    const to = $('dateTo').value;
+    let displayed = 0;
+    for (const order of data.orders) {
+      const day = order[po.DATE] || '';
+      if ((selectedSupplier && order[po.SUPPLIER] !== selectedSupplier) ||
+          (from && day < from) || (to && (!day || day > to))) continue;
+      const visibleLines = order.lines.filter(line => {
+        const status = order[po.STATUS] === 'Hủy' ? 'Hủy' : line[col.STATUS];
+        return (!selectedStatus || status === selectedStatus) &&
+          terms.every(term => line.searchText.includes(term));
+      });
+      if (!visibleLines.length) continue;
+      const group = node('tr');
+      group.className = 'po-heading';
+      const heading = node('th');
+      heading.colSpan = 7;
+      const toolbar = node('div');
+      toolbar.className = 'toolbar';
+      const id = order[po.ID];
+      toolbar.append(node('span', [id, supplierNames.get(order[po.SUPPLIER]) || order[po.SUPPLIER],
+        order[po.DATE], order.legacy ? 'Dòng cũ' : ''].filter(Boolean).join(' · ')));
+      const edit = data.permissions.edit && !order.legacy && !data.setup.length &&
+        data.canEditWithReceipts && order[po.STATUS] !== 'Hủy';
+      const button = node('button', edit ? 'Xem / Sửa' : 'Xem');
+      button.type = 'button';
+      button.onclick = () => openStoredOrder(id);
+      toolbar.append(button);
+      heading.append(toolbar);
+      group.append(heading);
+      body.append(group);
+      for (const line of visibleLines) {
+        displayed++;
+        const row = node('tr');
+        const lineId = line[col.ID];
+        const checkCell = node('td');
+        if (data.permissions.create) {
+          const check = node('input');
+          check.type = 'checkbox';
+          check.checked = selectedLines.has(lineId);
+          check.setAttribute('aria-label', 'Chọn quy cách ' + lineId);
+          check.onchange = () => {
+            if (check.checked && selectedLines.size >= 99) {
+              check.checked = false;
+              return message('Mỗi đơn tối đa 99 dòng quy cách.', true);
+            }
+            if (check.checked) selectedLines.add(lineId);
+            else selectedLines.delete(lineId);
+            updateCopyLink();
+          };
+          checkCell.append(check);
+        }
+        const spec = line.material;
+        const size = [spec[material.THICKNESS], spec[material.WIDTH]].filter(Boolean).join('*');
+        const customerProduct = node('td');
+        customerProduct.append(...(line.customerProducts.length ? line.customerProducts : ['Chưa gán đơn'])
+          .map(label => node('div', label)));
+        const dn = node('small', lineId);
+        dn.className = 'muted';
+        customerProduct.append(dn);
+        row.append(checkCell, customerProduct, ...[
+          [line[col.RESIN], spec[material.GRADE], spec[material.COLOR], spec[material.ESD], size].filter(Boolean).join(' · '),
+          kg(line[col.QTY]), kg(line.received), line[col.DELIVERY], order[po.STATUS] === 'Hủy' ? 'Hủy' : line[col.STATUS]]
+          .map(value => node('td', value)));
+        body.append(row);
+      }
+    }
+    const loaded = data.orders.reduce((sum, order) => sum + order.lines.length, 0);
+    const count = 'Hiển thị ' + kg(displayed) + ' / ' + kg(loaded) + ' quy cách đã tải';
+    $('counts').textContent = count + (data.matchingLines > loaded ? ' (' + kg(data.matchingLines) + ' kết quả trong database)' : '') +
+      '. Bấm Tìm kiếm để tra toàn bộ dữ liệu.';
+    if (!displayed) {
+      const cell = node('td', 'Không có quy cách phù hợp.');
+      cell.colSpan = 7;
+      const row = node('tr');
+      row.append(cell);
+      body.append(row);
+    }
+    updateCopyLink();
+  }
+
+  function detailLabel(entry) {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(entry.delivery)
+      ? entry.delivery.split('-').reverse().join('/') : entry.delivery;
+    return [entry.id, entry.customer || '—', entry.product || '—',
+      entry.qty && Number.isFinite(Number(entry.qty)) ? kg(Number(entry.qty)) : entry.qty || '—',
+      day || '—'].join(' | ');
+  }
+
+  function assignmentPicker(container, entries, selected, available, onChange) {
+    const search = node('input');
+    search.type = 'search';
+    search.placeholder = 'Tìm mã CTDH, tên khách hàng hoặc sản phẩm';
+    search.setAttribute('aria-label', 'Tìm chi tiết đơn hàng');
+    const choices = node('div');
+    choices.className = 'choices';
+    const render = () => {
+      const term = search.value.trim().toLowerCase();
+      const chosen = entries.filter(entry => selected.has(entry.id));
+      const matches = entries.filter(entry => !selected.has(entry.id) && available(entry) &&
+        detailLabel(entry).toLowerCase().includes(term));
+      choices.replaceChildren();
+      for (const entry of [...chosen, ...matches.slice(0, 50)]) {
+        const label = node('label');
+        const check = node('input');
+        check.type = 'checkbox';
+        check.checked = selected.has(entry.id);
+        check.disabled = !entry.editable;
+        check.onchange = () => {
+          if (check.checked) selected.add(entry.id);
+          else selected.delete(entry.id);
+          onChange();
+        };
+        label.append(check, detailLabel(entry));
+        choices.append(label);
+      }
+      if (!chosen.length && !matches.length) choices.append(node('span', 'Không có CTDH phù hợp.'));
+      if (matches.length > 50) choices.append(node('div', 'Nhập thêm ký tự để thu hẹp kết quả.'));
+    };
+    search.oninput = render;
+    container.append(search, choices);
+    return render;
+  }
+
+  function loadEditor(order, viewOnly, successMessage, initialForm) {
+    const { line: lineColumns } = data.fields;
+    if (busy) return;
+    const ids = order ? order.lines.filter(line => line.hasAssignmentColumn).map(line => line[lineColumns.ID]) : null;
+    setBusy(true);
+    message('Đang tải dữ liệu form…');
+    const showForm = result => {
+      materialColors = result.colors;
+      grades = result.grades;
+      densities = new Map(result.densities);
+      $('resinTypes').replaceChildren(...result.resins.map(value => new Option(value, value)));
+      const delivery = new Date(result.today + 'T00:00:00Z');
+      delivery.setUTCDate(delivery.getUTCDate() + 3);
+      defaultDelivery = delivery.toISOString().slice(0, 10);
+      setBusy(false);
+      openEditor(order, viewOnly, new Map(result.assignments || []));
+      if (successMessage) message(successMessage);
+
+    };
+    if (initialForm) {
+      showForm(initialForm);
+      return;
+    }
+    google.script.run.withFailureHandler(error => {
+      setBusy(false);
+      message(error.message, true);
+    }).withSuccessHandler(showForm).getFilmOrderFormData(ids, true);
+  }
+
+  function openEditor(order, viewOnly = false, assignments = new Map()) {
+    const { po: poColumns, line: lineColumns, supplier: supplierColumns, material: materialColumns } = data.fields;
+    current = order;
+    newAssignmentChoices = null;
+    readOnly = viewOnly;
+    token = crypto.randomUUID();
+    lineForms = [];
+    deliverySource = null;
+    $('applyDelivery').hidden = true;
+    $('receivedHeading').hidden = $('statusHeading').hidden = !order;
+    $('total').colSpan = order ? 13 : 11;
+    $('lines').replaceChildren();
+    const suppliers = data.suppliers.map(row => [row[supplierColumns.ID], row[supplierColumns.ID] + ' · ' + row[supplierColumns.NAME]]);
+    if (order && order[poColumns.SUPPLIER] && !suppliers.some(([id]) => id === order[poColumns.SUPPLIER])) {
+      suppliers.push([order[poColumns.SUPPLIER], order[poColumns.SUPPLIER]]);
+    }
+    options($('supplier'), [['', 'Chọn nhà cung cấp'], ...suppliers]);
+    $('supplier').value = order ? order[poColumns.SUPPLIER] || '' : data.copySupplier || '';
+    $('orderDate').value = order ? order[poColumns.DATE] || '' : data.today;
+    $('orderNote').value = order ? order[poColumns.NOTE] || '' : '';
+    originalHeader = filmHeaderValues();
+    [$('supplier'), $('orderDate'), $('orderNote')].forEach(el => { el.disabled = readOnly; });
+    $('editorTitle').textContent = order ? order[poColumns.ID] +
+      (order[poColumns.USER] ? ' · ' + order[poColumns.USER] : '') : 'Tạo đơn đặt màng';
+    $('add').hidden = readOnly;
+    $('save').hidden = readOnly;
+    $('list').hidden = true;
+    updateCopyLink();
+    $('editor').hidden = false;
+    materialOptions = new Map(data.materials.filter(row => row[materialColumns.THICKNESS] && row[materialColumns.WIDTH])
+      .map(row => [row[materialColumns.THICKNESS] + '*' + row[materialColumns.WIDTH] + ' · ' + row[materialColumns.ID], row]));
+    $('sizes').replaceChildren(...Array.from(materialOptions, ([value, row]) =>
+      new Option([row[materialColumns.GRADE], row[materialColumns.COLOR], row[materialColumns.ESD]].filter(Boolean).join(' · '), value)));
+    if (order) order.lines.forEach(line => addLine(line, assignments.get(line[lineColumns.ID])));
+    else if (data.copyLines?.length) data.copyLines.forEach(line => addLine(line));
+    else addLine();
+    resetFilmReference(!order && !viewOnly);
+    updateTotal();
+    message(!order && data.mixedSuppliers ? 'Các quy cách thuộc nhiều nhà cung cấp. Chọn nhà cung cấp cho PO mới.' :
+      !order && data.copySupplier && !$('supplier').value ? 'Chọn nhà cung cấp đang hoạt động cho PO mới.' : '');
+    if (!createPage) $('close').focus();
+  }
+
+  function priceValue(value) {
+    const text = value.trim();
+    if (!text) return '';
+    const shorthand = /^(\d+(?:[.,]\d+)?)k$/i.exec(text);
+    return shorthand ? Number(shorthand[1].replace(',', '.')) * 1000 : quantityValue(text);
+  }
+
+  function quantityValue(value) {
+    const text = value.trim();
+    if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(text)) {
+      return Number(text.replaceAll('.', '').replace(',', '.'));
+    }
+    return /^\d+(?:[.,]\d+)?$/.test(text) ? Number(text.replace(',', '.')) : NaN;
+  }
+
+  function orderKg(value, existing) {
+    const amount = quantityValue(value);
+    return existing ? amount : Math.round(amount);
+  }
+
+  function updateTotal() {
+    let sum = 0;
+    let cost = 0;
+    let priced = false;
+    for (const { fields, id } of lineForms) {
+      const qty = orderKg(fields.qty.value, id) || 0;
+      const price = priceValue(fields.price.value);
+      sum += qty;
+      cost += qty * (Number(price) || 0);
+      priced ||= price !== '';
+    }
+    $('total').textContent = 'Tổng đặt ' + kg(sum) + ' kg' +
+      (priced ? ' · Thành tiền các dòng có giá ' + kg(cost) + ' đ' : '');
+  }
+
+  function addLine(line = {}, assignedEntries = []) {
+    const { line: lineColumns, material: materialColumns } = data.fields;
+    const row = node('tr');
+    const numberCell = node('td');
+    row.append(numberCell);
+    const spec = line.material || {};
+    const fields = {};
+    const assignmentRow = node('tr');
+    const originalIds = assignedEntries.map(entry => entry.id);
+    const assigned = new Set(originalIds);
+    const input = (key, label, value, type = 'text') => {
+      const el = node(type === 'textarea' || type === 'select' ? type : 'input');
+      if (el.tagName === 'INPUT') el.type = type;
+      el.value = value == null ? '' : value;
+      el.setAttribute('aria-label', label);
+      el.disabled = readOnly;
+      fields[key] = el;
+      const cell = node('td');
+      cell.append(el);
+      row.append(cell);
+      return el;
+    };
+    input('resin', 'Loại nhựa', line[lineColumns.RESIN]).setAttribute('list', 'resinTypes');
+    fields.resin.required = true;
+    const grade = input('grade', 'Cấp độ', '', 'select');
+    const oldGrade = spec[materialColumns.GRADE] || '';
+    const gradeValues = ['', ...grades];
+    if (!gradeValues.includes(oldGrade)) gradeValues.push(oldGrade);
+    options(grade, gradeValues.map(value => [value, value || '—']));
+    grade.value = oldGrade;
+    const color = input('color', 'Màu sắc', '', 'select');
+    function setColor(value) {
+      const colors = value && !materialColors.includes(value) ? [...materialColors, value] : materialColors;
+      options(color, colors.map(name => [name, name]));
+      color.value = value || '';
+    }
+    setColor(spec[materialColumns.COLOR]);
+    const esdSelect = input('esd', 'Tĩnh điện', '', 'select');
+    const oldEsd = spec[materialColumns.ESD] || '';
+    options(esdSelect, esd.some(([id]) => id === oldEsd) ? esd : [...esd, [oldEsd, oldEsd]]);
+    esdSelect.value = oldEsd;
+    const size = input('size', 'Quy cách',
+      spec[materialColumns.THICKNESS] && spec[materialColumns.WIDTH] ? spec[materialColumns.THICKNESS] + ' × ' + spec[materialColumns.WIDTH] : '');
+    size.className = 'size';
+    size.required = true;
+    size.pattern = '[0-9]+([.,][0-9]+)?\\s*[*xX×]\\s*[0-9]+([.,][0-9]+)?';
+    size.setAttribute('list', 'sizes');
+    size.oninput = () => {
+      const selected = materialOptions.get(size.value);
+      if (!selected) return;
+      size.value = selected[materialColumns.THICKNESS] + ' × ' + selected[materialColumns.WIDTH];
+      if (gradeValues.includes(selected[materialColumns.GRADE])) grade.value = selected[materialColumns.GRADE];
+      setColor(selected[materialColumns.COLOR]);
+      if (esd.some(([id]) => id === selected[materialColumns.ESD])) esdSelect.value = selected[materialColumns.ESD];
+    };
+    size.onchange = size.oninput;
+    const price = input('price', 'Đơn giá (đ/kg)', line[lineColumns.PRICE] ? quantityFormat.format(line[lineColumns.PRICE]) : '');
+    price.inputMode = 'decimal';
+    price.placeholder = 'VD 59.500';
+    price.classList.toggle('priced', !!price.value);
+    price.oninput = () => {
+      const value = priceValue(price.value);
+      price.setCustomValidity(value === '' || Number.isFinite(value)
+        ? '' : 'Nhập đơn giá hợp lệ.');
+      price.classList.toggle('priced', !!price.value);
+      updateTotal();
+    };
+    price.onblur = () => {
+      const value = priceValue(price.value);
+      if (Number.isFinite(value)) price.value = quantityFormat.format(value);
+    };
+    const initialQty = line[lineColumns.QTY];
+    const qty = input('qty', 'Số lượng (kg)', initialQty ? quantityFormat.format(
+      line[lineColumns.ID] ? initialQty : Math.round(initialQty)) : '');
+    qty.inputMode = 'decimal';
+    qty.required = true;
+    qty.placeholder = 'VD 1.250';
+    qty.oninput = () => {
+      qty.setCustomValidity(orderKg(qty.value, line[lineColumns.ID]) > 0 ? '' : 'Nhập số lượng lớn hơn 0 kg sau khi làm tròn.');
+      updateTotal();
+    };
+    qty.onblur = () => {
+      const value = orderKg(qty.value, line[lineColumns.ID]);
+      if (Number.isFinite(value)) qty.value = quantityFormat.format(value);
+    };
+    const note = input('note', 'Ghi chú dòng', line[lineColumns.NOTE], 'textarea');
+    note.className = 'note';
+    note.rows = 2;
+    const delivery = input('delivery', 'Ngày giao', line[lineColumns.DELIVERY] ?? defaultDelivery, 'date');
+    if (!readOnly) {
+      for (const event of ['focus', 'click', 'input', 'change']) {
+        delivery.addEventListener(event, () => selectDeliverySource(delivery));
+      }
+      for (const event of ['pointerleave', 'blur']) {
+        delivery.addEventListener(event, () => scheduleDeliveryHide(delivery));
+      }
+    }
+    const received = node('td');
+    received.hidden = !current;
+    function updateReceived() {
+      if (line.received == null) {
+        received.textContent = '—';
+        return;
+      }
+      const difference = (quantityValue(qty.value) || 0) - line.received;
+      const excess = difference < -1e-8;
+      const amount = node('span', kg(excess ? -difference : Math.max(0, difference)));
+      if (excess) {
+        amount.className = 'excess';
+        amount.title = 'Giao dư';
+      }
+      const receivedKg = node(line.receiptIds?.length ? 'button' : 'span', kg(line.received));
+      if (line.receiptIds?.length) {
+        receivedKg.type = 'button';
+        receivedKg.className = 'link-button';
+        receivedKg.title = 'Xem lịch sử nhận màng';
+        receivedKg.onclick = () => openReceiptHistory(line[lineColumns.ID]);
+      }
+      received.replaceChildren(receivedKg, ' - ', amount);
+    }
+    qty.addEventListener('input', updateReceived);
+    updateReceived();
+    row.append(received);
+    const status = input('status', 'Trạng thái nhận', '', 'select');
+    const currentStatus = line[lineColumns.STATUS] || data.lineStatuses[0];
+    const choices = data.lineStatuses.includes(currentStatus) ? data.lineStatuses : [currentStatus, ...data.lineStatuses];
+    options(status, choices.map(value => [value, value]));
+    status.value = currentStatus;
+    status.parentElement.hidden = !current;
+    status.disabled = readOnly || !line[lineColumns.ID] || currentStatus === 'Hủy';
+    const removeCell = node('td');
+    const item = { id: line[lineColumns.ID] || '', key: String(++referenceLineKey), numberCell, setColor,
+      row, assignmentRow, fields, assigned, originalIds };
+    if (!readOnly && !line[lineColumns.ID]) {
+      const remove = node('button', 'Bỏ');
+      remove.type = 'button';
+      remove.onclick = () => {
+        row.remove();
+        assignmentRow.remove();
+        lineForms = lineForms.filter(entry => entry !== item);
+        if (deliverySource === delivery || lineForms.length < 2) selectDeliverySource(null);
+        refreshLineNumbers();
+        lineForms.forEach(entry => entry.refreshChoices());
+        updateTotal();
+      };
+      removeCell.append(remove);
+    }
+    row.append(removeCell);
+
+    const cell = node('td');
+    cell.colSpan = current ? 13 : 11;
+    const details = node('details');
+    details.append(node('summary', 'Xem Đơn'));
+    item.refreshChoices = () => {};
+    const content = node('div', 'Chưa gán đơn.');
+    content.className = 'line-orders';
+    details.append(content);
+
+    function showDraftPicker(entries) {
+      content.replaceChildren();
+      const render = assignmentPicker(content, entries, assigned,
+        entry => !lineForms.some(other => other !== item && other.assigned.has(entry.id)),
+        () => {
+          lineForms.forEach(other => { if (other !== item) other.refreshChoices(); });
+        });
+      item.refreshChoices = () => { if (details.open) render(); };
+      details.ontoggle = item.refreshChoices;
+      item.refreshChoices();
+    }
+
+    function loadDetails(edit) {
+      if (edit && !item.id && newAssignmentChoices) {
+        showDraftPicker(newAssignmentChoices);
+        return;
+      }
+      const status = node('div', 'Đang tải CTDH…');
+      status.setAttribute('role', 'status');
+      content.replaceChildren(status);
+      const runner = google.script.run.withFailureHandler(error => {
+        if (!status.isConnected) return;
+        status.textContent = error.message;
+        const retry = node('button', 'Thử lại');
+        retry.type = 'button';
+        retry.onclick = () => loadDetails(edit);
+        content.append(retry);
+      }).withSuccessHandler(entries => {
+        if (!status.isConnected) return;
+        if (edit) {
+          if (!item.id) newAssignmentChoices = entries;
+          // Keep the original snapshot for the server's concurrent-edit check.
+          showDraftPicker(entries.filter(entry => !entry.assigned || assigned.has(entry.id)));
+        } else {
+          content.replaceChildren(...entries.map(entry => node('div', detailLabel(entry))));
+          if (!entries.length) content.append(node('div', 'Chưa gán đơn.'));
+        }
+      });
+      if (edit) runner.getFilmAssignmentOptions(item.id);
+      else runner.getFilmAssignedDetails(item.id);
+    }
+
+    const canAssign = !readOnly && data.permissions.assign === true && (!item.id || line.canAssign);
+    if (canAssign) {
+      const edit = node('button', 'Sửa/Bổ sung');
+      edit.type = 'button';
+      edit.onclick = () => loadDetails(true);
+      details.append(edit);
+    }
+    if (item.id && line.hasAssignmentColumn) {
+      details.ontoggle = () => {
+        if (!details.open) return;
+        details.ontoggle = null;
+        if (assignedEntries.length) loadDetails(false);
+      };
+    } else if (!canAssign) {
+      details.hidden = true;
+    }
+    cell.append(details);
+    assignmentRow.append(cell);
+    item.originalFields = Object.fromEntries(Object.entries(fields).map(([key, input]) => [key, input.value]));
+    item.storedStatus = line.storedStatus;
+    lineForms.push(item);
+    refreshLineNumbers();
+    $('lines').append(row, assignmentRow);
+    updateTotal();
+  }
+
+  let receiptRequest = 0;
+  $('closeReceipt').onclick = () => $('receiptDialog').close();
+
+  function openReceiptHistory(id) {
+    const request = ++receiptRequest;
+    $('receiptTitle').textContent = 'Lịch sử nhận màng · ' + id;
+    $('receiptHistory').replaceChildren();
+    $('receiptMessage').textContent = 'Đang tải…';
+    $('receiptDialog').showModal();
+    google.script.run.withFailureHandler(error => {
+      if (request === receiptRequest) $('receiptMessage').textContent = error.message;
+    }).withSuccessHandler(entries => {
+      if (request !== receiptRequest) return;
+      $('receiptMessage').textContent = entries.length ? '' : 'Chưa có phiếu nhận.';
+      for (const entry of entries) {
+        const row = $('receiptHistory').insertRow();
+        [entry.date, entry.id, entry.rolls, kg(entry.kg), entry.status]
+          .forEach(value => { row.insertCell().textContent = value; });
+      }
+    }).getFilmReceiptHistory(id);
+  }
+
+  let products;
+  let referenceRequest = 0;
+  let referenceLineKey = 0;
+  let selectedProduct = '';
+  let molds = [];
+  const referencePanel = $('referencePanel');
+  const productLabels = new Map();
+  const decimal = value => {
+    const text = String(value).trim().replace(',', '.');
+    return /^\d+(?:\.\d+)?$/.test(text) ? Number(text) : NaN;
+  };
+
+  function refreshLineNumbers() {
+    const target = $('referenceTarget');
+    const selected = target.value;
+    options(target, lineForms.map((item, index) => {
+      item.numberCell.textContent = String(index + 1);
+      return [item.key, String(index + 1)];
+    }));
+    if (lineForms.some(item => item.key === selected)) target.value = selected;
+    updateCalculation();
+  }
+
+  function refreshProductChoices() {
+    const query = $('referenceProduct').value.trim().toLowerCase();
+    const matches = [...productLabels].filter(([label]) => label.toLowerCase().includes(query)).slice(0, 50);
+    $('referenceProducts').replaceChildren(...matches.map(([label]) => new Option(label, label)));
+  }
+
+  function refreshDensity(reset) {
+    const values = densities.get($('calcResin').value.trim().toUpperCase()) || [];
+    $('densityOptions').replaceChildren(...values.map(value => new Option(String(value), String(value))));
+    if (reset) $('calcDensity').value = values[0] ?? '';
+  }
+
+  function chooseMold() {
+    const key = $('referenceMold').value;
+    const mold = key === '' ? null : molds[Number(key)];
+    $('moldLength').value = mold?.length || '';
+    $('moldWidth').value = mold?.width || '';
+    $('moldCavity').value = mold?.cavity || '';
+    updateFilmDimension('moldWidth', 'filmWidth', 40);
+    updateFilmDimension('moldLength', 'filmLength', 60);
+    updateCalculation();
+  }
+
+  function renderProductHistory(entries) {
+    const section = $('productHistory');
+    section.replaceChildren();
+    if (!entries.length) {
+      section.append(node('p', 'Chưa tìm thấy lịch sử qua các chi tiết đơn hàng đã gán.'));
+      return;
+    }
+    const list = node('ul');
+    const col = data.fields.supplier;
+    for (const entry of entries) {
+      const vendor = data.suppliers.find(row => row[col.ID] === entry.supplier);
+      const size = entry.thickness && entry.width ? entry.thickness + '*' + entry.width : '';
+      const row = node('li', [entry.date, entry.id, vendor?.[col.NAME] || entry.supplier,
+        entry.resin, entry.grade, entry.color, entry.esd].filter(Boolean).join(' · '));
+      if (size) {
+        const spec = node('span', size);
+        spec.className = 'history-highlight';
+        row.append(' · ', spec);
+      }
+      if (entry.qty) row.append(' · ' + kg(entry.qty) + ' KG');
+      if (entry.price) {
+        const price = node('span', kg(entry.price) + ' đ/kg');
+        price.className = 'history-highlight';
+        row.append(' · ', price);
+      }
+      row.append(' ');
+      const copy = node('button', 'Sao chép');
+      copy.type = 'button';
+      copy.disabled = !size;
+      copy.onclick = () => {
+        const lineNumber = applyToLine({ ...entry, qtyToOrder: entry.qty });
+        if (!lineNumber) return;
+        $('calcResin').value = entry.resin;
+        $('calcThickness').value = entry.thickness;
+        refreshDensity(true);
+        updateCalculation();
+        $('referenceMessage').textContent = 'Đã sao chép quy cách ' + entry.id + ' vào dòng ' + lineNumber + '.';
+      };
+      row.append(copy);
+      list.append(row);
+    }
+    section.append(list);
+  }
+
+  function loadProductReference(id) {
+    const request = ++referenceRequest;
+    $('productHistory').replaceChildren();
+    molds = [];
+    $('moldChoice').hidden = true;
+    options($('referenceMold'), []);
+    chooseMold();
+    $('referenceMessage').textContent = id ? 'Đang tải khuôn và lịch sử…' : '';
+    if (!id) return;
+    google.script.run.withFailureHandler(error => {
+      if (request === referenceRequest) $('referenceMessage').textContent = error.message;
+    }).withSuccessHandler(result => {
+      if (request !== referenceRequest) return;
+      molds = result.molds;
+      options($('referenceMold'), molds.map((mold, index) =>
+        [String(index), [mold.code || 'Khuôn ' + (index + 1), mold.status].filter(Boolean).join(' · ')]));
+      $('moldChoice').hidden = molds.length <= 1;
+      if (molds.length) $('referenceMold').value = '0';
+      chooseMold();
+      renderProductHistory(result.history);
+      $('referenceMessage').textContent = molds.length ? '' : 'Chưa có khuôn định hình. Có thể nhập kích thước và cavity bằng tay.';
+    }).getFilmProductReference(id);
+  }
+
+  function filmCalculation(filmLength, filmWidth, cavity, qty, thickness, density, ng) {
+    if (![filmLength, filmWidth, thickness, density].every(value => Number.isFinite(value) && value > 0) ||
+        !Number.isSafeInteger(cavity) || cavity <= 0 || !Number.isSafeInteger(qty) || qty <= 0 ||
+        !Number.isFinite(ng) || ng < 0 || ng > 100) return null;
+    const sheets = Math.ceil(qty / cavity);
+    const weight = thickness * (filmLength * filmWidth / 1000000) * density;
+    const total = weight * sheets * (1 + ng / 100);
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return { filmLength, filmWidth, sheets, weight, kg: Math.round(total / 10) * 10 };
+  }
+
+  function updateCalculation() {
+    const result = filmCalculation(decimal($('filmLength').value), decimal($('filmWidth').value),
+      decimal($('moldCavity').value), quantityValue($('productQty').value), decimal($('calcThickness').value),
+      decimal($('calcDensity').value), decimal($('calcNg').value.replace(/%$/, '')));
+    if (result) {
+      const amount = node('strong', kg(result.kg) + ' KG');
+      amount.className = 'calculated-kg';
+      $('calculation').replaceChildren('Màng ' + kg(result.filmLength) + '*' + kg(result.filmWidth) +
+        ' mm · ' + kg(result.sheets) + ' tấm · ' + quantityFormat.format(Number(result.weight.toPrecision(8))) +
+        ' kg/tấm · Cần đặt ', amount);
+    } else {
+      $('calculation').textContent = 'Nhập khổ màng, dài màng, cavity, số sản phẩm, độ dày, tỷ trọng và NG để tính số kg.';
+    }
+    $('applyCalculation').disabled = !result || !result.kg || !$('calcResin').value.trim() || !$('referenceTarget').value;
+    return result;
+  }
+
+  function applyToLine(entry) {
+    const index = lineForms.findIndex(item => item.key === $('referenceTarget').value);
+    if (index < 0) return null;
+    const { fields, setColor } = lineForms[index];
+    fields.resin.value = entry.resin;
+    fields.size.value = entry.thickness + '*' + entry.width;
+    for (const key of ['grade', 'esd']) {
+      const value = entry[key];
+      if (value === undefined) continue;
+      if (!Array.from(fields[key].options).some(option => option.value === value)) {
+        fields[key].add(new Option(value, value));
+      }
+      fields[key].value = value;
+    }
+    if (entry.color !== undefined) setColor(entry.color);
+    if (entry.price !== undefined) {
+      fields.price.value = entry.price === '' ? '' : quantityFormat.format(entry.price);
+      fields.price.oninput();
+    }
+    if (entry.note !== undefined) fields.note.value = entry.note;
+    if (entry.delivery !== undefined) fields.delivery.value = entry.delivery;
+    if (entry.qtyToOrder !== undefined) {
+      fields.qty.value = entry.qtyToOrder === '' ? '' : quantityFormat.format(Math.round(entry.qtyToOrder));
+      fields.qty.oninput();
+    }
+    return index + 1;
+  }
+
+  function updateFilmDimension(moldId, filmId, allowance) {
+    const size = decimal($(moldId).value);
+    $(filmId).value = size > 0 ? String(Number((size + allowance).toFixed(10))) : '';
+  }
+
+  function resetFilmReference(visible) {
+    referenceRequest++;
+    referencePanel.open = false;
+    referencePanel.hidden = !visible;
+    selectedProduct = '';
+    $('referenceProduct').value = '';
+    $('productHistory').replaceChildren();
+    $('referenceMessage').textContent = '';
+    $('moldChoice').hidden = true;
+    options($('referenceMold'), []);
+    molds = [];
+    for (const id of ['productQty', 'calcResin', 'calcThickness']) $(id).value = '';
+    $('calcNg').value = '3';
+    refreshDensity(true);
+    chooseMold();
+  }
+
+  referencePanel.ontoggle = () => {
+    if (!referencePanel.open || products) return;
+    const request = ++referenceRequest;
+    $('referenceMessage').textContent = 'Đang tải danh mục sản phẩm…';
+    google.script.run.withFailureHandler(error => {
+      if (request === referenceRequest) $('referenceMessage').textContent = error.message;
+    }).withSuccessHandler(entries => {
+      if (request !== referenceRequest) return;
+      products = entries;
+      for (const product of products) {
+        const label = [product.name, product.id, product.code].filter(Boolean).join(' · ');
+        productLabels.set(label, product.id);
+      }
+      $('referenceMessage').textContent = '';
+      refreshProductChoices();
+    }).getFilmProducts();
+  };
+  function selectReferenceProduct(id) {
+    if (id === selectedProduct) return;
+    selectedProduct = id;
+    loadProductReference(id);
+  }
+
+  $('referenceProduct').oninput = () => {
+    refreshProductChoices();
+    if (!products) return;
+    const value = $('referenceProduct').value.trim();
+    selectReferenceProduct(productLabels.get(value) ||
+      products.find(product => product.id.toLowerCase() === value.toLowerCase())?.id || '');
+  };
+  $('referenceProduct').onchange = () => {
+    if (selectedProduct || !products) return;
+    const value = $('referenceProduct').value.trim().toLowerCase();
+    if (!value) return;
+    const matches = products.filter(product => [product.name, product.code].some(text => text.toLowerCase() === value));
+    if (matches.length === 1) selectReferenceProduct(matches[0].id);
+  };
+  $('referenceMold').onchange = chooseMold;
+  $('moldWidth').oninput = () => { updateFilmDimension('moldWidth', 'filmWidth', 40); updateCalculation(); };
+  $('moldLength').oninput = () => { updateFilmDimension('moldLength', 'filmLength', 60); updateCalculation(); };
+  $('calcResin').onchange = () => { refreshDensity(true); updateCalculation(); };
+  $('calcResin').oninput = updateCalculation;
+  $('productQty').onblur = () => {
+    const value = quantityValue($('productQty').value);
+    if (Number.isSafeInteger(value)) $('productQty').value = quantityFormat.format(value);
+  };
+  for (const id of ['filmLength', 'filmWidth', 'moldCavity', 'productQty', 'calcThickness', 'calcDensity', 'calcNg']) {
+    $(id).oninput = updateCalculation;
+  }
+  $('applyCalculation').onclick = () => {
+    const result = updateCalculation();
+    const resin = $('calcResin').value.trim();
+    if (!result?.kg || !resin) return;
+    const lineNumber = applyToLine({ resin, thickness: decimal($('calcThickness').value), width: result.filmWidth, qtyToOrder: result.kg });
+    if (lineNumber) $('calculation').append(' · Đã áp dụng vào dòng ' + lineNumber + '.');
+  };
+
+  function positionDeliveryAction() {
+    if (!deliverySource) return;
+    const heading = $('deliveryHeading').getBoundingClientRect();
+    const strip = $('deliveryActions').getBoundingClientRect();
+    const button = $('applyDelivery');
+    button.hidden = heading.right <= strip.left || heading.left >= strip.right;
+    button.style.left = Math.max(0, heading.left - strip.left) + 'px';
+  }
+
+  function selectDeliverySource(input) {
+    clearTimeout(deliveryHideTimer);
+    deliverySource = input?.value && lineForms.length >= 2 ? input : null;
+    $('applyDelivery').hidden = !deliverySource;
+    if (deliverySource) {
+      $('applyDelivery').title = 'Áp dụng ngày ' + deliverySource.value + ' cho mọi dòng';
+      positionDeliveryAction();
+    }
+  }
+
+  function scheduleDeliveryHide(input) {
+    if (!deliverySource || (input && input !== deliverySource)) return;
+    clearTimeout(deliveryHideTimer);
+    // Allow the pointer or focus to move from the date input to the action above the table.
+    deliveryHideTimer = setTimeout(() => selectDeliverySource(null), 450);
+  }
+
+  const deliveryButton = $('applyDelivery');
+  deliveryButton.onpointerenter = deliveryButton.onfocus = () => clearTimeout(deliveryHideTimer);
+  deliveryButton.onpointerleave = deliveryButton.onblur = () => scheduleDeliveryHide();
+  deliveryButton.onclick = () => {
+    if (!deliverySource?.value || readOnly) return;
+    for (const { fields } of lineForms) fields.delivery.value = deliverySource.value;
+    selectDeliverySource(null);
+  };
+  $('lineScroll').addEventListener('scroll', positionDeliveryAction);
+  new ResizeObserver(positionDeliveryAction).observe($('deliveryActions'));
+
+  function filmHeaderValues() {
+    return { supplier: $('supplier').value, date: $('orderDate').value, note: $('orderNote').value };
+  }
+
+  function hasAssignmentChanges(item) {
+    return item.assigned.size !== item.originalIds.length || item.originalIds.some(id => !item.assigned.has(id));
+  }
+
+  function statusOnlyChanges(header) {
+    if (!current || lineForms.length !== current.lines.length ||
+        Object.keys(header).some(key => header[key] !== originalHeader[key]) ||
+        lineForms.some(item => !item.id || hasAssignmentChanges(item) ||
+          Object.entries(item.fields).some(([key, input]) => key !== 'status' && input.value !== item.originalFields[key]))) return [];
+    return lineForms.filter(item => item.fields.status.value !== item.originalFields.status)
+      .map(item => ({ id: item.id, before: item.storedStatus, status: item.fields.status.value }));
+  }
+
+  $('editor').onsubmit = event => {
+    event.preventDefault();
+    if (busy || readOnly) return;
+    if (!lineForms.length) return message('Thêm ít nhất một quy cách.', true);
+    const header = filmHeaderValues();
+    const statusChanges = statusOnlyChanges(header);
+    const payload = { id: current ? current[data.fields.po.ID] : '' };
+    if (statusChanges.length) {
+      payload.statusChanges = statusChanges;
+    } else {
+      if (!$('editor').reportValidity()) return;
+      const lines = lineForms.map(item => {
+        const fields = Object.fromEntries(Object.entries(item.fields).map(([key, input]) => [key, input.value]));
+        const [thickness, width] = fields.size.split(/[*x×]/i);
+        return { ...fields, qty: orderKg(fields.qty, item.id), price: priceValue(fields.price), thickness, width, id: item.id,
+          ...((!item.id || hasAssignmentChanges(item)) && { detailIds: Array.from(item.assigned), originalIds: item.originalIds }) };
+      });
+      Object.assign(payload, header, { revision: current ? current.revision : '', token, lines });
+    }
+    setBusy(true);
+    message(statusChanges.length ? 'Đang lưu trạng thái…' : 'Đang lưu đơn…');
+    google.script.run.withFailureHandler(error => {
+      setBusy(false);
+      message(error.message, true);
+    }).withSuccessHandler(result => {
+      requestedCopies = [];
+      load('Đã lưu ' + result.id + '.');
+    }).saveFilmOrder(payload);
+  };
+  $('reload').onclick = () => load();
+  for (const id of ['search', 'supplierFilter', 'progressFilter', 'dateFrom', 'dateTo']) {
+    $(id).oninput = () => { if (!busy && !$('list').hidden) showList(); };
+  }
+  $('filmSearch').onsubmit = event => { event.preventDefault(); if (!busy) load(); };
+  $('close').onclick = () => { message(''); showList(); };
+  $('add').onclick = () => {
+    if (lineForms.length < 99) addLine();
+    else message('Mỗi đơn tối đa 99 dòng quy cách.', true);
+  };
+  $('editor').addEventListener('keydown', event => {
+    if (event.key === 'F9' && !busy && !readOnly) {
+      event.preventDefault();
+      $('editor').requestSubmit();
+    }
+  });
+  load();
+</script>
+</body>
+</html>

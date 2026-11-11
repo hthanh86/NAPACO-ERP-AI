@@ -68,7 +68,7 @@ if __name__ == '__main__':
             time.sleep(1)
         else:raise RuntimeError('MySQL chưa sẵn sàng; kiểm tra Docker Desktop.')
         compose('run', '--rm', '--no-deps', 'backend', 'alembic', 'upgrade', 'head')
-        compose('run', '--rm', '--no-deps', 'backend', 'python', '-m', 'app.legacy_store')
+        compose('run', '--rm', '--no-deps', 'backend', 'python', '-m', 'app.compatibility.store')
         compose('up', '-d', 'backend')
         import urllib.request
         for _ in range(30):
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     elif action in {'preview', 'import'}:
         args = ['--apply'] if action == 'import' else []
         compose('run', '--rm', '--no-deps', '--user', str(os.getuid()) + ':' + str(os.getgid()),
-                'backend', 'python', '-m', 'app.migrate_data', *args)
+                'backend', 'python', '-m', 'app.migrations.import_data', *args)
     elif action == 'status':
         compose('ps')
     else:

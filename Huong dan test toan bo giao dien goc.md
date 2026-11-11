@@ -209,7 +209,17 @@ MySQL: khách hàng, sản phẩm, đơn, màng, nhận, cấp/trả…
 
 Đây là một backend đóng gói chung; Node dùng để giữ logic JavaScript gốc khi chuyển đổi, không gọi Apps Script để chạy nghiệp vụ. Các cấu trúc giống bảng tính chỉ được dựng trong bộ nhớ từng yêu cầu; dữ liệu nghiệp vụ được đọc/ghi vào các bảng MySQL riêng. Sau khi đối chiếu xong có thể chuyển dần logic sang Python mà không đổi giao diện.
 
-Các file HTML gốc trong `source-appscript/src` không bị sửa. Bộ dựng trang chỉ thay đường gọi `google.script.run` bằng API local, giữ tham số và kết quả tương thích, đồng thời dùng bản thư viện kéo thả lưu tại máy.
+**Source đã được tổ chức theo module.** Xem [Cấu trúc source và quy tắc bảo trì](Cau%20truc%20source%20va%20quy%20tac%20maintain.md) để biết đầy đủ cây thư mục và nơi cần sửa.
+
+- Backend Đơn hàng: `backend/app/modules/orders/`.
+- Backend Nguyên liệu: `backend/app/modules/materials/`, chia `purchasing`, `receiving`, `inventory`.
+- Giao diện tương ứng: `frontend/orders/` và `frontend/materials/`; menu tại `frontend/shared/menu.html`.
+- Đăng nhập ở `backend/app/auth/`; Google/Drive ở `backend/app/integrations/google/`.
+- Cầu nối code cũ nằm riêng tại `backend/app/compatibility/`.
+
+`source-appscript/` là bản gốc để đối chiếu, không còn là thư mục được đọc trực tiếp để chạy màn hình local. Tám template đang chạy trong `frontend` giữ nguyên nội dung gốc; bộ dựng trang chỉ thay đường gọi `google.script.run` bằng API local và dùng thư viện kéo thả lưu tại máy.
+
+Quy tắc bảo trì: đặt nghiệp vụ vào module sở hữu; tách API, kiểm tra đầu vào, xử lý nghiệp vụ và model; không dồn nghiệp vụ mới vào `core` hoặc `compatibility`. Khi cần chuyển logic JavaScript sang Python, thực hiện trong chính module đó và giữ các hợp đồng giao diện hiện có.
 
 Mã nguồn được lưu bằng Git, bí mật và dữ liệu được loại khỏi Git. Không đưa `.mysql.env`, `.google.env`, `.env`, `.local-admin.txt`, client JSON, Excel nguồn hoặc backup lên kho mã công khai.
 

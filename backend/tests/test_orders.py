@@ -7,9 +7,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session as OrmSession
 from app.main import app
-from app.db import engine, get_db
-from app.models import Customer, Product, User, Order, OrderLine
-from app.auth import hash_password
+from app.core.database import engine, get_db
+from app.modules.customers.models import Customer
+from app.modules.products.models import Product
+from app.auth.models import User
+from app.modules.orders.models import Order, OrderLine
+from app.auth.security import hash_password
 
 
 

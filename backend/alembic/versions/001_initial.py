@@ -8,7 +8,7 @@ down_revision = None
 
 def upgrade():
     # Frozen initial schema: later model changes require a new revision.
-    from app.initial_schema import metadata
+    from app.migrations.snapshots.v001 import metadata
     metadata.create_all(bind=op.get_bind())
 
 

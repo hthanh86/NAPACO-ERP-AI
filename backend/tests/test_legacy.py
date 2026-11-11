@@ -1,8 +1,13 @@
 import secrets
 from decimal import Decimal
 from sqlalchemy import select, func
-from app.models import Customer, Product, Order, OrderLine
-from app.film_models import FilmPO, FilmLine, FilmReceipt, FilmMovement, LegacyState
+from app.modules.customers.models import Customer
+from app.modules.products.models import Product
+from app.modules.orders.models import Order, OrderLine
+from app.modules.materials.purchasing.models import FilmPO, FilmLine
+from app.modules.materials.receiving.models import FilmReceipt
+from app.modules.materials.inventory.models import FilmMovement
+from app.compatibility.models import LegacyState
 
 
 class RPC:
@@ -36,7 +41,7 @@ def test_all_original_screens_and_menu_render(clients):
         response=client.get('/?view='+view)
         assert response.status_code==200,response.text[:500]
         assert 'Lỗi khởi chạy ứng dụng' not in response.text,response.text[:1000]
-        assert '/static/legacy-bridge.js' in response.text
+        assert '/static/shared/bridge.js' in response.text
         assert 'erp-module-link' in response.text
         assert '<?' not in response.text
 
@@ -47,7 +52,7 @@ def test_all_original_read_contracts(clients):
     assert query['success'] is True
     rpc.call('getOrderFormData');rpc.call('getOrderModalInitData','')
     saved_page=rpc.call('getSavedOrderListPage',{'view':'be','orders':'DH_261024_01'})
-    assert '/static/legacy-bridge.js' in saved_page
+    assert '/static/shared/bridge.js' in saved_page
     rpc.call('apiGetLineKanbanData')
     film=rpc.call('getFilmOrders',{})
     assert film['setup']==[],film['setup']

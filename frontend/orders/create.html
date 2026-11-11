@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>NAPACO ERP - Tạo Đơn Đặt Hàng</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, -apple-system, Arial, sans-serif; }
+    body { margin: 0; padding: 12px; background: #f1f5f9; color: #1e293b; font-size: 13px; }
+    .modal-container { display: flex; flex-direction: column; gap: 10px; height: 96vh; }
+
+    /* Header & Thanh tổng quan giao dịch */
+    .top-summary-bar {
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      color: #ffffff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .top-summary-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .summary-title { font-weight: 700; font-size: 13.5px; letter-spacing: 0.4px; }
+    .count-badge { background: #3b82f6; color: #fff; padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 12px; }
+    .auth-badge-locked { background: #fef3c7; color: #92400e; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+    .auth-badge-hybrid { background: #e0f2fe; color: #075985; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 12px; }
+    .top-summary-right { display: flex; align-items: center; gap: 10px; }
+    .grand-total-badge { background: #16a34a; color: #fff; padding: 5px 14px; border-radius: 6px; font-weight: 700; font-size: 13.5px; }
+
+    /* Vùng cuộn chứa các khối PO Card */
+    .po-groups-wrapper { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+
+    .po-card {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-left: 5px solid #2563eb;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .po-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .po-card-title { font-weight: 700; font-size: 13.5px; color: #1e40af; display: flex; align-items: center; gap: 8px; }
+    .po-card-actions { display: flex; align-items: center; gap: 8px; }
+    .po-subtotal-badge {
+      background: #f1f5f9;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 12.5px;
+    }
+
+    .grid-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 3px; }
+    .form-group label { font-weight: 600; color: #334155; font-size: 11.5px; }
+    .req { color: #dc2626; }
+    .form-control { padding: 6px 9px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 12.5px; outline: none; width: 100%; }
+    .form-control:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.12); }
+    .form-control[readonly], .form-control:disabled { background: #f8fafc; font-weight: 700; color: #0f172a; cursor: not-allowed; }
+    .highlight-po { font-weight: 700; color: #1d4ed8; background: #eff6ff; border-color: #93c5fd; }
+
+    /* Hộp đính kèm File PO */
+    .po-upload-box {
+      margin-top: 10px;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: #f8fafc;
+      border: 1px dashed #94a3b8;
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .po-upload-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .upload-btn { background: #2563eb; color: #fff; padding: 5px 11px; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+    .upload-btn:hover { background: #1d4ed8; }
+    .btn-drive-search { background: #0284c7; color: #fff; border: none; padding: 5px 11px; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+    .btn-drive-search:hover { background: #0369a1; }
+    .btn-clear-file { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; cursor: pointer; }
+    .file-name-text { color: #475569; font-size: 12px; }
+    .rename-preview-label { font-size: 11.5px; color: #64748b; margin-right: 4px; font-weight: 600; }
+    .rename-badge { background: #dcfce7; color: #166534; font-weight: 700; padding: 4px 10px; border-radius: 4px; font-size: 12px; border: 1px solid #86efac; }
+
+    /* Bảng danh sách mặt hàng */
+    .items-table { width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #e2e8f0; }
+    .items-table th { background: #f1f5f9; color: #334155; text-align: left; padding: 6px 7px; border-bottom: 1px solid #cbd5e1; white-space: nowrap; }
+    .items-table td { padding: 5px 6px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+    .items-table input, .items-table select { width: 100%; padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; }
+    .badge-new { background: #fef3c7; color: #b45309; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10.5px; display: inline-block; }
+    .badge-exist { background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 10.5px; display: inline-block; }
+
+    .po-card-footer-bar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .btn-icon-del {
+      background: #fee2e2;
+      color: #b91c1c;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-icon-del:hover { background: #fecaca; }
+
+    /* Hộp thông báo trạng thái */
+    .status-box { padding: 9px 12px; border-radius: 6px; font-weight: 600; font-size: 12.5px; }
+    .status-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .status-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .status-loading { background: #e0f2fe; color: #075985; border: 1px solid #7dd3fc; }
+
+    /* Footer điều khiển */
+    .modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding-top: 6px; border-top: 1px solid #cbd5e1; }
+    .btn { padding: 8px 18px; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer; border: none; display: inline-flex; align-items: center; gap: 6px; }
+    .btn[hidden] { display: none; }
+    .btn-secondary { background: #e2e8f0; color: #334155; }
+    .btn-secondary:hover { background: #cbd5e1; }
+    .btn-primary { background: #16a34a; color: #ffffff; }
+    .btn-primary:hover { background: #15803d; }
+    .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    /* Modal con tìm kiếm Google Drive */
+    .drive-modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .drive-modal-box {
+      background: #ffffff;
+      width: 720px;
+      max-width: 95vw;
+      max-height: 85vh;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .drive-modal-header {
+      background: #0f172a;
+      color: #fff;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 700;
+    }
+    .drive-modal-body { padding: 14px 16px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .drive-search-bar { display: flex; gap: 8px; }
+    .drive-file-list { border: 1px solid #e2e8f0; border-radius: 6px; overflow-y: auto; max-height: 320px; }
+    .drive-file-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      cursor: pointer;
+    }
+    .drive-file-item:hover { background: #f0fdf4; }
+    .drive-file-item:last-child { border-bottom: none; }
+    .drive-file-info { display: flex; flex-direction: column; gap: 2px; }
+    .drive-file-name { font-weight: 600; color: #0f172a; }
+    .drive-file-meta { font-size: 11px; color: #64748b; }
+    .btn-choose-file { background: #16a34a; color: #fff; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+    body.erp-shell { align-content: start; }
+    .erp-shell .modal-container {
+      height: auto;
+      width: 100%;
+      min-width: 0;
+      max-width: 1550px;
+      margin: 0 auto;
+      padding: clamp(12px, 2vw, 24px);
+    }
+    .erp-shell .po-groups-wrapper { overflow: visible; }
+    .erp-shell .items-scroll { overflow-x: auto; }
+    .erp-shell .items-table { min-width: 1050px; }
+    .erp-shell a.btn { text-decoration: none; }
+    @media (max-width: 1100px) {
+      .erp-shell .grid-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<? var webUrl = typeof orderWebUrl !== 'undefined' ? orderWebUrl : '';
+   var webEntry = typeof orderWebEntry !== 'undefined' && orderWebEntry; ?>
+<body class="<?= [webUrl ? 'erp-shell' : '', webEntry ? 'order-web' : ''].join(' ').trim() ?>">
+  <? if (webUrl) { ?>
+    <?!= renderOrderMenu_(webUrl, 'create') ?>
+  <? } ?>
+  <main class="modal-container">
+    <datalist id="customerDatalist"></datalist>
+    <datalist id="productDatalist"></datalist>
+    <!-- THANH TỔNG QUAN GIAO DỊCH -->
+    <div class="top-summary-bar">
+      <div class="top-summary-left">
+        <span class="summary-title">📋 DANH SÁCH ĐƠN HÀNG (PO) TRONG GIAO DỊCH</span>
+        <span id="poCountBadge" class="count-badge">0 ĐƠN PO</span>
+        <span id="userAuthBadge" class="auth-badge-hybrid">Đang kiểm tra tài khoản...</span>
+      </div>
+      <div class="top-summary-right">
+        <? if (webEntry) { ?>
+          <button type="button" class="btn btn-secondary" id="btnAddPO" onclick="addOrderGroup()" disabled>+ Thêm PO</button>
+        <? } ?>
+        <span id="grandTotalAllBadge" class="grand-total-badge">Tổng giá trị: 0 ₫</span>
+      </div>
+    </div>
+
+    <!-- DANH SÁCH CÁC KHỐI PO CARD -->
+    <div id="poGroupsContainer" class="po-groups-wrapper"></div>
+
+    <!-- HỘP TRẠNG THÁI / CẢNH BÁO -->
+    <div id="statusBox" class="status-box" style="display:none;"></div>
+
+    <!-- NÚT ĐIỀU KHIỂN -->
+    <div class="modal-footer">
+      <? if (webUrl) { ?>
+        <a class="btn btn-secondary" href="<?= webUrl ?>?view=index">Về trang Đơn hàng</a>
+        <a class="btn btn-primary" id="savedOrderLink" data-app-url="<?= webUrl ?>" hidden>Xem đơn vừa tạo</a>
+      <? } else { ?>
+        <button type="button" class="btn btn-secondary" onclick="closeModalWindow()">Đóng / Hủy</button>
+      <? } ?>
+      <button type="button" id="btnSaveOrder" disabled class="btn btn-primary" onclick="handleSaveOrder()">
+        💾 XÁC NHẬN & LƯU TẤT CẢ VÀO DATABASE
+      </button>
+    </div>
+  </main>
+
+  <!-- MODAL CON TÌM KIẾM GOOGLE DRIVE -->
+  <div id="driveSearchModal" class="drive-modal-overlay" style="display:none;">
+    <div class="drive-modal-box">
+      <div class="drive-modal-header">
+        <span>🔍 TÌM VÀ CHỌN TỆP TỪ GOOGLE DRIVE</span>
+        <button type="button" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;" onclick="closeDriveSearchModal()">✕</button>
+      </div>
+      <div class="drive-modal-body">
+        <div class="drive-search-bar">
+          <input type="text" id="driveSearchKeyword" class="form-control" placeholder="Nhập tên tệp, số PO hoặc dán liên kết Google Drive" onkeydown="if(event.key==='Enter') executeDriveSearch()">
+          <button type="button" class="btn btn-primary" style="padding:6px 14px;" onclick="executeDriveSearch()">Tìm kiếm</button>
+        </div>
+        <div id="driveSearchStatus" style="font-size:12px;color:#64748b;display:none;"></div>
+        <div id="driveSearchResults" class="drive-file-list" style="display:none;"></div>
+      </div>
+      <div style="padding:8px 16px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" style="padding:6px 14px;" onclick="closeDriveSearchModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const webOrder = document.body.classList.contains('order-web');
+    let blankOrderGroup;
+    const modalState = {
+      poGroups: [],
+      salesStaffList: [],
+      customers: [],
+      customersById: new Map(),
+      products: [],
+      orderUnits: [],
+      currentUser: { isAuthenticated: false, isLockedReadonly: false, maNV: '', display: '' },
+      serverDate: '',
+      defaultDeliveryDate: '',
+      activeDriveTargetGIdx: null,
+      driveSearchRequestId: 0
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const today = new Date();
+      modalState.serverDate = formatDateIso(today);
+      modalState.defaultDeliveryDate = formatDateIso(new Date(today.getTime() + 10 * 86400000));
+
+      try {
+        const base64Data = '<?= typeof initialDataJson !== "undefined" ? initialDataJson : "" ?>';
+        if (base64Data && base64Data.indexOf('initialDataJson') === -1) {
+          const decodedString = decodeURIComponent(escape(window.atob(base64Data)));
+          const parsedData = JSON.parse(decodedString);
+          initOrderModal(parsedData);
+          return;
+        }
+      } catch (err) {
+        console.warn('Fallback nạp RPC:', err);
+      }
+
+      if (webOrder) {
+        showStatus('Không thể khởi tạo trang tạo đơn. Vui lòng tải lại trang.', 'error');
+        return;
+      }
+      showStatus('⏳ Đang tải danh mục Khách hàng, Sản phẩm & Nhân sự...', 'loading');
+      google.script.run
+        .withSuccessHandler(function(res) {
+          hideStatus();
+          if (res && res.success) {
+            initOrderModal(res.data);
+          } else {
+            showStatus('❌ Không thể nạp dữ liệu: ' + (res && res.error ? res.error.message : 'Lỗi không xác định'), 'error');
+          }
+        })
+        .withFailureHandler(function(err) {
+          showStatus('❌ Lỗi kết nối Server: ' + err.message, 'error');
+        })
+        .getOrderModalInitData('');
+    });
+
+    window.initOrderModal = function(data) {
+      if (!data) return;
+      if (data.initError) {
+        showStatus(data.initError, 'error');
+        return;
+      }
+
+      modalState.salesStaffList = data.salesStaffList || [];
+      modalState.customers = data.customers || [];
+      modalState.customersById = new Map(modalState.customers.map(function(customer) {
+        return [customer.maKH, customer];
+      }));
+      modalState.products = data.products || [];
+      modalState.orderUnits = data.orderUnits?.length ? data.orderUnits : ['Cái'];
+      modalState.currentUser = data.currentUser || { isAuthenticated: false, isLockedReadonly: false };
+      modalState.serverDate = data.serverDate || modalState.serverDate;
+      modalState.defaultDeliveryDate = data.defaultDeliveryDate || modalState.defaultDeliveryDate;
+
+      modalState.poGroups = (data.poGroups || []).map(function(grp) {
+        const items = (grp.items || []).map(function(it) {
+          const ngayDat = it.ngayDat || grp.ngayDat || modalState.serverDate;
+          const ngayGiao = it.ngayGiao || it.deliveryDate || grp.ngayGiaoDK || modalState.defaultDeliveryDate;
+          return Object.assign({}, it, {
+            unit: String(it.unit || '').trim() || modalState.orderUnits[0],
+            ngayDat: ngayDat,
+            ngayGiao: ngayGiao,
+            deliveryDate: ngayGiao
+          });
+        });
+
+        return Object.assign({}, grp, {
+          ngayDat: grp.ngayDat || modalState.serverDate,
+          ngayGiaoDK: computeMaxDeliveryDate(items, grp.ngayGiaoDK || modalState.defaultDeliveryDate),
+          salesPerson: modalState.currentUser.isAuthenticated
+            ? modalState.currentUser.maNV
+            : (grp.salesPerson || (modalState.salesStaffList[0] ? modalState.salesStaffList[0].maNV : '')),
+          fileAttachment: null,
+          driveFileInfo: grp.existingFileUrl ? { name: 'Tệp từ Sheet', url: grp.existingFileUrl } : null,
+          items: items
+        });
+      });
+
+      if (webOrder) {
+        blankOrderGroup = modalState.poGroups[0];
+        modalState.poGroups = [];
+        addOrderGroup();
+        document.getElementById('btnAddPO').disabled = false;
+      }
+      document.getElementById('btnSaveOrder').disabled = false;
+      renderDatalists();
+      renderAuthHeaderBadge();
+      renderAllPOGroups();
+      recalculateTotals();
+    };
+
+    function addOrderGroup() {
+      modalState.poGroups.push(Object.assign({}, blankOrderGroup, {
+        soPO: '',
+        autoPONumber: '',
+        items: [Object.assign({}, blankOrderGroup.items[0])]
+      }));
+      renderAllPOGroups();
+      recalculateTotals();
+    }
+
+    function addOrderItem(gIdx) {
+      modalState.poGroups[gIdx].items.push(Object.assign({}, blankOrderGroup.items[0]));
+      renderAllPOGroups();
+      recalculateTotals();
+    }
+
+    function removeOrderGroup(gIdx) {
+      if (modalState.poGroups.length <= 1) return;
+      modalState.poGroups.splice(gIdx, 1);
+      renderAllPOGroups();
+      recalculateTotals();
+    }
+
+    function renderAuthHeaderBadge() {
+      const badge = document.getElementById('userAuthBadge');
+      if (!badge) return;
+      const u = modalState.currentUser;
+      if (u && u.isAuthenticated) {
+        badge.className = 'auth-badge-locked';
+        badge.innerHTML = '🔒 Sales: ' + escapeHtml(u.display) + ' (' + escapeHtml(u.email) + ')';
+      } else {
+        badge.className = 'auth-badge-hybrid';
+        badge.innerHTML = '👤 Chế độ chọn Sales linh hoạt';
+      }
+    }
+
+    function renderDatalists() {
+      const cusListEl = document.getElementById('customerDatalist');
+      if (cusListEl) {
+        cusListEl.innerHTML = modalState.customers.map(function(c) {
+          return '<option value="' + escapeHtml(c.name) + '">' + escapeHtml(c.maKH) + '</option>';
+        }).join('');
+      }
+
+      const prodListEl = document.getElementById('productDatalist');
+      if (!webOrder && prodListEl) {
+        prodListEl.innerHTML = modalState.products.map(function(p) {
+          return '<option value="' + escapeHtml(p.prodName) + '">' + escapeHtml(p.spId + (p.codeSP ? ' - ' + p.codeSP : '')) + '</option>';
+        }).join('');
+      }
+    }
+
+    function updateProductSuggestions(gIdx) {
+      const grp = modalState.poGroups[gIdx];
+      const products = modalState.products.filter(function(p) {
+        if (grp.maKH) return p.customerId === grp.maKH;
+        return !grp.customerName && modalState.customersById.has(p.customerId);
+      });
+      const counts = new Map();
+      products.forEach(function(p) {
+        const key = p.prodName.toLowerCase();
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+
+      grp.productChoices = new Map();
+      document.getElementById('productDatalist_' + gIdx).innerHTML = products.map(function(p) {
+        const customer = modalState.customersById.get(p.customerId);
+        const label = [customer?.name, p.codeSP, p.spId].filter(Boolean).join(' · ');
+        const value = counts.get(p.prodName.toLowerCase()) > 1
+          ? p.prodName + ' [' + label + ']'
+          : p.prodName;
+        grp.productChoices.set(value.toLowerCase(), p);
+        return '<option value="' + escapeHtml(value) + '">' + escapeHtml(label) + '</option>';
+      }).join('');
+    }
+
+    function renderUnitControl(item, gIdx, iIdx) {
+      const change = ' onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'unit\', this.value)"';
+      if (!webOrder) return '<input type="text" value="' + escapeHtml(item.unit) + '"' + change + '>';
+      const units = modalState.orderUnits.slice();
+      if (item.unit && !units.includes(item.unit)) units.push(item.unit);
+      return '<select class="form-control" aria-label="Đơn vị tính"' + change + '>' +
+        '<option value="">Chọn ĐVT</option>' +
+        units.map(function(unit) {
+          return '<option value="' + escapeHtml(unit) + '"' + (unit === item.unit ? ' selected' : '') + '>' +
+            escapeHtml(unit) + '</option>';
+        }).join('') + '</select>';
+    }
+
+    function renderAllPOGroups() {
+      const container = document.getElementById('poGroupsContainer');
+      container.innerHTML = '';
+
+      const countBadge = document.getElementById('poCountBadge');
+      if (countBadge) {
+        countBadge.textContent = modalState.poGroups.length + ' ĐƠN PO';
+      }
+
+      modalState.poGroups.forEach(function(grp, gIdx) {
+        const card = document.createElement('div');
+        card.className = 'po-card';
+
+        let salesControlHtml = '';
+        if (modalState.currentUser && modalState.currentUser.isAuthenticated) {
+          salesControlHtml =
+            '<input type="text" class="form-control" value="🔒 ' + escapeHtml(modalState.currentUser.display) + '" readonly title="Đã khóa tự động theo Email đăng nhập">';
+        } else {
+          let staffOptionsHtml = '<option value="">-- Chọn NV Kinh Doanh --</option>';
+          modalState.salesStaffList.forEach(function(nv) {
+            const isSelected = grp.salesPerson && (
+              grp.salesPerson === nv.maNV ||
+              grp.salesPerson === nv.display ||
+              grp.salesPerson === nv.hoTen
+            );
+            staffOptionsHtml += '<option value="' + escapeHtml(nv.maNV) + '" ' + (isSelected ? 'selected' : '') + '>' + escapeHtml(nv.display) + '</option>';
+          });
+          salesControlHtml =
+            '<select class="form-control" onchange="updateGroupField(' + gIdx + ', \'salesPerson\', this.value)">' +
+            staffOptionsHtml +
+            '</select>';
+        }
+
+        let itemsRowsHtml = '';
+        grp.items.forEach(function(item, iIdx) {
+          const isNew = Boolean(item.isNew || item.isNewProduct);
+          const statusBadge = isNew
+            ? '<span class="badge-new">MỚI</span>'
+            : '<span class="badge-exist">CŨ</span>';
+          const lineTotal = (Number(item.qty) || 0) * (Number(item.price) || 0);
+          const valType = String(item.type || '1').trim();
+
+          itemsRowsHtml +=
+            '<tr>' +
+            '<td style="text-align:center;font-weight:700;color:#475569;">' + (iIdx + 1) + '</td>' +
+            '<td style="text-align:center;">' + statusBadge + '</td>' +
+            '<td><input type="text" list="productDatalist' + (webOrder ? '_' + gIdx : '') + '" value="' + escapeHtml(item.prodName) + '" placeholder="Nhập SP..." onchange="onItemProductChange(' + gIdx + ', ' + iIdx + ', this.value)"></td>' +
+            '<td><input type="text" value="' + escapeHtml(item.codeSP) + '" placeholder="Code..." onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'codeSP\', this.value)"></td>' +
+            '<td>' + renderUnitControl(item, gIdx, iIdx) + '</td>' +
+            '<td><input type="text" value="' + escapeHtml(formatNumber(item.qty)) + '" style="text-align:right;font-weight:700;" onblur="updateItemField(' + gIdx + ', ' + iIdx + ', \'qty\', this.value); this.value = formatNumber(modalState.poGroups[' + gIdx + '].items[' + iIdx + '].qty);"></td>' +
+            '<td><input type="text" value="' + escapeHtml(formatNumber(item.price)) + '" style="text-align:right;" onblur="updateItemField(' + gIdx + ', ' + iIdx + ', \'price\', this.value); this.value = formatNumber(modalState.poGroups[' + gIdx + '].items[' + iIdx + '].price);"></td>' +
+            '<td id="lineTotal_' + gIdx + '_' + iIdx + '" style="font-weight:700;color:#0f172a;text-align:right;white-space:nowrap;">' + formatVND(lineTotal) + '</td>' +
+            '<td><input type="date" value="' + escapeHtml(item.ngayDat) + '" onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'ngayDat\', this.value)"></td>' +
+            '<td><input type="date" value="' + escapeHtml(item.ngayGiao) + '" onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'ngayGiao\', this.value)"></td>' +
+            '<td><input type="text" value="' + escapeHtml(item.note || '') + '" placeholder="Ghi chú..." onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'note\', this.value)"></td>' +
+            '<td style="text-align:center;white-space:nowrap;">' +
+            '<button type="button" class="btn btn-secondary" style="padding:3px 7px;font-size:11px;" onclick="toggleDetailRow(' + gIdx + ', ' + iIdx + ')" title="Khuôn/Màng/Đóng gói">⚙️</button> ' +
+            '<button type="button" class="btn-icon-del" onclick="removeItemRow(' + gIdx + ', ' + iIdx + ')" title="Xóa dòng mặt hàng">🗑️</button>' +
+            '</td>' +
+            '</tr>' +
+            '<tr id="detailRow_' + gIdx + '_' + iIdx + '" style="display:none;background:#f8fafc;">' +
+            '<td colspan="12" style="padding:8px 12px;border-bottom:2px solid #cbd5e1;">' +
+            '<div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;">' +
+            '<div class="form-group"><label>Giá khuôn (VNĐ)</label><input type="text" class="form-control" value="' + escapeHtml(formatNumber(item.giaKhuon)) + '" style="text-align:right;" onblur="updateItemField(' + gIdx + ', ' + iIdx + ', \'giaKhuon\', this.value); this.value = formatNumber(modalState.poGroups[' + gIdx + '].items[' + iIdx + '].giaKhuon);"></div>' +
+            '<div class="form-group"><label>Quy cách Màng nhựa</label><input type="text" class="form-control" value="' + escapeHtml(item.mang || '') + '" placeholder="VD: PET 0.4*550..." onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'mang\', this.value)"></div>' +
+            '<div class="form-group"><label>Phân loại gia công</label><select class="form-control" onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'type\', this.value)"><option value="1" ' + (valType === '1' ? 'selected' : '') + '>1: Định hình</option><option value="2" ' + (valType === '2' ? 'selected' : '') + '>2: Bế / Cắt tấm</option></select></div>' +
+            '<div class="form-group"><label>Quy cách đóng gói</label><input type="text" class="form-control" value="' + escapeHtml(item.donggoi || '') + '" placeholder="VD: Thùng carton..." onchange="updateItemField(' + gIdx + ', ' + iIdx + ', \'donggoi\', this.value)"></div>' +
+            '</div>' +
+            '</td>' +
+            '</tr>';
+        });
+
+        // Xử lý hiển thị thông tin tệp đính kèm
+        let fileStatusText = 'Chưa chọn tệp đính kèm';
+        let clearFileBtnHtml = '';
+        if (grp.fileAttachment) {
+          fileStatusText = '📁 Từ máy: <strong>' + escapeHtml(grp.fileAttachment.fileName) + '</strong>';
+          clearFileBtnHtml = '<button type="button" class="btn-clear-file" onclick="clearAttachedFile(' + gIdx + ')">✕ Hủy tệp</button>';
+        } else if (grp.driveFileInfo) {
+          fileStatusText = '☁️ Từ Drive: <a href="' + escapeHtml(grp.driveFileInfo.url) + '" target="_blank" style="color:#0284c7;font-weight:700;">' + escapeHtml(grp.driveFileInfo.name) + '</a>';
+          clearFileBtnHtml = '<button type="button" class="btn-clear-file" onclick="clearAttachedFile(' + gIdx + ')">✕ Hủy tệp</button>';
+        }
+
+        card.innerHTML =
+          (webOrder ? '<datalist id="productDatalist_' + gIdx + '"></datalist>' : '') +
+          '<div class="po-card-header">' +
+          '<div class="po-card-title">' +
+          '<span id="poTitle_' + gIdx + '">📦 ĐƠN HÀNG PO #' + (gIdx + 1) + ' — KHÁCH HÀNG: ' + escapeHtml(grp.customerName || '(Chưa chọn)') + '</span>' +
+          '</div>' +
+          '<div class="po-card-actions">' +
+          '<span id="poSubtotal_' + gIdx + '" class="po-subtotal-badge">Thành tiền PO: 0 ₫</span>' +
+          (webOrder && modalState.poGroups.length > 1
+            ? '<button type="button" class="btn btn-secondary" onclick="removeOrderGroup(' + gIdx + ')">Xóa PO</button>'
+            : '') +
+          '</div>' +
+          '</div>' +
+
+          '<div class="grid-form">' +
+          '<div class="form-group">' +
+          '<label>Khách Hàng <span class="req">*</span></label>' +
+          '<input type="text" list="customerDatalist" id="poCustomer_' + gIdx + '" class="form-control" value="' + escapeHtml(grp.customerName) + '" placeholder="Khách hàng..." onchange="onGroupCustomerChange(' + gIdx + ', this.value)">' +
+          '</div>' +
+          '<div class="form-group">' +
+          '<label>Số PO (Đối soát & Đặt tên file) <span class="req">*</span></label>' +
+          '<input type="text" id="soPO_' + gIdx + '" class="form-control highlight-po" value="' + escapeHtml(grp.soPO) + '" oninput="updateGroupField(' + gIdx + ', \'soPO\', this.value)">' +
+          '</div>' +
+          '<div class="form-group">' +
+          '<label>Nhân Viên Kinh Doanh <span class="req">*</span></label>' +
+          salesControlHtml +
+          '</div>' +
+          '<div class="form-group">' +
+          '<label>Ghi Chú Đơn Hàng</label>' +
+          '<input type="text" class="form-control" value="' + escapeHtml(grp.orderNote || '') + '" placeholder="Ghi chú đơn hàng..." onchange="updateGroupField(' + gIdx + ', \'orderNote\', this.value)">' +
+          '</div>' +
+          '</div>' +
+
+          /* HỘP ĐÍNH KÈM TỆP: ĐÍNH KÈM MÁY HOẶC SEARCH DRIVE */
+          '<div class="po-upload-box">' +
+          '<div class="po-upload-left">' +
+          '<label class="upload-btn">' +
+          '📎 Chọn tệp từ máy' +
+          '<input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx" hidden onchange="handleGroupFileSelect(event, ' + gIdx + ')">' +
+          '</label>' +
+          '<button type="button" class="btn-drive-search" onclick="openDriveSearchModal(' + gIdx + ')">🔍 Tìm trên Google Drive</button>' +
+          '<span id="fileNameDisplay_' + gIdx + '" class="file-name-text">' + fileStatusText + '</span>' +
+          clearFileBtnHtml +
+          '</div>' +
+          /* YÊU CẦU 3: SỬA THÀNH "Tên lưu file:" VÀ GIỐNG VỚI SỐ PO */
+          '<div class="po-upload-right">' +
+          '<span class="rename-preview-label">Tên lưu file:</span>' +
+          '<span id="renamedFilePreview_' + gIdx + '" class="rename-badge">' + escapeHtml(grp.soPO || 'Chưa có Số PO') + '</span>' +
+          '</div>' +
+          '</div>' +
+
+          '<div class="items-scroll"><table class="items-table">' +
+          '<thead>' +
+          '<tr>' +
+          '<th style="width:30px;text-align:center;">#</th>' +
+          '<th style="width:50px;text-align:center;">Loại</th>' +
+          '<th style="min-width:170px;">Tên Sản Phẩm <span class="req">*</span></th>' +
+          '<th style="width:95px;">Code SP</th>' +
+          '<th style="min-width:80px;">ĐVT <span class="req">*</span></th>' +
+          '<th style="width:90px;text-align:right;">Số Lượng <span class="req">*</span></th>' +
+          '<th style="width:95px;text-align:right;">Đơn Giá (₫)</th>' +
+          '<th style="width:110px;text-align:right;">Thành Tiền</th>' +
+          '<th style="width:115px;">Ngày Đặt <span class="req">*</span></th>' +
+          '<th style="width:115px;">Ngày Giao <span class="req">*</span></th>' +
+          '<th style="width:120px;">Ghi Chú KT</th>' +
+          '<th style="width:65px;text-align:center;">Thao tác</th>' +
+          '</tr>' +
+          '</thead>' +
+          '<tbody>' + itemsRowsHtml + '</tbody>' +
+          '</table></div>' +
+
+          '<div class="po-card-footer-bar">' +
+          (webOrder ? '<button type="button" class="btn btn-secondary" onclick="addOrderItem(' + gIdx + ')">+ Thêm dòng sản phẩm</button>' : '') +
+          '<span style="font-size:11.5px;color:#475569;">Ngày giao dự kiến chung (Max): <strong id="maxDelivDisplay_' + gIdx + '" style="color:#1e40af;">' + escapeHtml(grp.ngayGiaoDK) + '</strong></span>' +
+          '</div>';
+
+        container.appendChild(card);
+        if (webOrder) updateProductSuggestions(gIdx);
+      });
+    }
+
+    /* YÊU CẦU 4: HÀM KIỂM TRA TÊN TỆP NGẮN/QUY TẮC HAY DÀI LOẰNG NGOẰNG */
+    function checkFileNamingRule(fileName) {
+      if (!fileName) return { isClean: false, baseName: '' };
+      let baseName = fileName.trim();
+      const dotIdx = baseName.lastIndexOf('.');
+      if (dotIdx !== -1) {
+        baseName = baseName.substring(0, dotIdx).trim();
+      }
+
+      // Nếu tên dài hơn 35 ký tự -> coi như dài loằng ngoằng
+      if (baseName.length > 35) return { isClean: false, baseName: baseName };
+
+      // Chứa chuỗi số liên tục >= 10 số (mã máy ảnh/timestamp ngẫu nhiên)
+      if (/\d{10,}/.test(baseName)) return { isClean: false, baseName: baseName };
+
+      // Tiền tố camera/máy scan phổ biến
+      if (/^(img|image|scan|camscanner|doc|document|screenshot|photo|wp_)\b/i.test(baseName)) {
+        return { isClean: false, baseName: baseName };
+      }
+
+      return { isClean: true, baseName: baseName };
+    }
+
+    function applyFileSelectionToPO(gIdx, fileName) {
+      const grp = modalState.poGroups[gIdx];
+      const rule = checkFileNamingRule(fileName);
+
+      if (rule.isClean && rule.baseName) {
+        // Tên ngắn gọn, có quy tắc -> Gán Số PO = Tên file
+        grp.soPO = rule.baseName;
+      } else {
+        // Tên file dài loằng ngoằng hoặc không có quy tắc -> Dùng tên PO tự sinh
+        grp.soPO = grp.autoPONumber;
+      }
+
+      // Cập nhật lên ô input Số PO trên giao diện
+      const poInput = document.getElementById('soPO_' + gIdx);
+      if (poInput) poInput.value = grp.soPO;
+
+      updateRenamedFilePreview(gIdx);
+    }
+
+    /* XỬ LÝ CHỌN TỆP TỪ MÁY TÍNH */
+    function handleGroupFileSelect(e, gIdx) {
+      const file = e.target.files[0];
+      const grp = modalState.poGroups[gIdx];
+
+      if (!file) return;
+
+      if (file.size > 15 * 1024 * 1024) {
+        showStatus('⚠️ Tệp "' + file.name + '" vượt quá giới hạn 15MB!', 'error');
+        e.target.value = '';
+        return;
+      }
+
+      const ext = file.name.indexOf('.') !== -1 ? file.name.split('.').pop().toLowerCase() : 'pdf';
+      const reader = new FileReader();
+      grp.fileReader = reader;
+      reader.onerror = function() {
+        if (grp.fileReader !== reader) return;
+        grp.fileReader = null;
+        showStatus('Không thể đọc tệp. Vui lòng chọn lại.', 'error');
+      };
+      reader.onload = function(evt) {
+        if (grp.fileReader !== reader) return;
+        grp.fileReader = null;
+        const base64String = evt.target.result.split(',')[1];
+        grp.fileAttachment = {
+          fileName: file.name,
+          extension: ext,
+          mimeType: file.type || 'application/octet-stream',
+          base64: base64String
+        };
+        grp.existingFileUrl = '';
+        grp.driveFileInfo = null;
+
+        // Áp dụng quy tắc đặt tên Số PO & cập nhật xem trước
+        const currentIndex = modalState.poGroups.indexOf(grp);
+        if (currentIndex < 0) return;
+        applyFileSelectionToPO(currentIndex, file.name);
+
+        const nameDisp = document.getElementById('fileNameDisplay_' + currentIndex);
+        if (nameDisp) nameDisp.innerHTML = '📁 Từ máy: <strong>' + escapeHtml(file.name) + '</strong>';
+        renderAllPOGroups();
+      };
+      reader.readAsDataURL(file);
+    }
+
+    /* YÊU CẦU 5: XỬ LÝ TÌM VÀ CHỌN TỆP TỪ GOOGLE DRIVE */
+    function openDriveSearchModal(gIdx) {
+      modalState.activeDriveTargetGIdx = gIdx;
+      const grp = modalState.poGroups[gIdx];
+      const defaultKeyword = (grp.customerName || grp.soPO || '').replace(/^PO-\d+-/, '');
+
+      const kwInput = document.getElementById('driveSearchKeyword');
+      kwInput.value = defaultKeyword;
+
+      document.getElementById('driveSearchResults').style.display = 'none';
+      document.getElementById('driveSearchResults').innerHTML = '';
+      document.getElementById('driveSearchStatus').style.display = 'none';
+      document.getElementById('driveSearchModal').style.display = 'flex';
+
+      if (defaultKeyword) executeDriveSearch();
+    }
+
+    function closeDriveSearchModal() {
+      document.getElementById('driveSearchModal').style.display = 'none';
+      modalState.activeDriveTargetGIdx = null;
+      modalState.driveSearchRequestId++;
+    }
+
+    function executeDriveSearch() {
+      const kw = document.getElementById('driveSearchKeyword').value.trim();
+      if (!kw) return;
+      const requestId = ++modalState.driveSearchRequestId;
+
+      const statusEl = document.getElementById('driveSearchStatus');
+      const resultsEl = document.getElementById('driveSearchResults');
+
+      statusEl.style.display = 'block';
+      statusEl.textContent = '⏳ Đang tìm kiếm trên Google Drive của bạn...';
+      resultsEl.style.display = 'none';
+      resultsEl.innerHTML = '';
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (requestId !== modalState.driveSearchRequestId) return;
+          if (res && res.success) {
+            statusEl.style.display = res.incomplete ? 'block' : 'none';
+            statusEl.textContent = res.incomplete
+              ? 'Drive chưa tìm được trong tất cả kho dùng chung. Bạn có thể dán liên kết tệp.'
+              : '';
+            if (!res.files || res.files.length === 0) {
+              statusEl.style.display = 'block';
+              if (!res.incomplete) {
+                statusEl.textContent = 'Không tìm thấy tệp phù hợp. Bạn có thể dán liên kết Google Drive của tệp.';
+              }
+              return;
+            }
+
+            resultsEl.style.display = 'block';
+            resultsEl.innerHTML = res.files.map(function(f, fIdx) {
+              return '<div class="drive-file-item">' +
+                '<div class="drive-file-info">' +
+                '<span class="drive-file-name">' + escapeHtml(f.name) + '</span>' +
+                '<span class="drive-file-meta">Cập nhật: ' + escapeHtml(f.updated) + ' | Dung lượng: ' + formatFileSize(f.size) + '</span>' +
+                '</div>' +
+                '<button type="button" class="btn-choose-file" onclick="chooseDriveFile(' + fIdx + ')">Chọn tệp này</button>' +
+                '</div>';
+            }).join('');
+
+            window._cachedDriveSearchFiles = res.files;
+          } else {
+            statusEl.style.display = 'block';
+            statusEl.textContent = '❌ Lỗi tìm kiếm Drive: ' + (res?.error || 'Không xác định');
+          }
+        })
+        .withFailureHandler(function(err) {
+          if (requestId !== modalState.driveSearchRequestId) return;
+          statusEl.style.display = 'block';
+          statusEl.textContent = '❌ Lỗi kết nối máy chủ: ' + err.message;
+        })
+        .searchUserDriveFiles(kw);
+    }
+
+    function chooseDriveFile(fIdx) {
+      const file = window._cachedDriveSearchFiles ? window._cachedDriveSearchFiles[fIdx] : null;
+      if (!file || modalState.activeDriveTargetGIdx === null) return;
+
+      const gIdx = modalState.activeDriveTargetGIdx;
+      const grp = modalState.poGroups[gIdx];
+
+      // Lưu trực tiếp URL của tệp trên Drive, không copy hay upload lại
+      grp.fileReader = null;
+      grp.existingFileUrl = file.url;
+      grp.fileAttachment = null;
+      grp.driveFileInfo = { name: file.name, url: file.url };
+
+      // Áp dụng quy tắc kiểm tra tên tệp cho Số PO
+      applyFileSelectionToPO(gIdx, file.name);
+
+      closeDriveSearchModal();
+      renderAllPOGroups();
+      showStatus('✅ Đã đính kèm tệp từ Google Drive: ' + file.name + ' (Lưu link trực tiếp, không copy).', 'success');
+      setTimeout(hideStatus, 4000);
+    }
+
+    function clearAttachedFile(gIdx) {
+      const grp = modalState.poGroups[gIdx];
+      grp.fileAttachment = null;
+      grp.existingFileUrl = '';
+      grp.driveFileInfo = null;
+      renderAllPOGroups();
+    }
+
+    /* YÊU CẦU 3: HIỂN THỊ "TÊN LƯU FILE" TRÙNG HOÀN TOÀN VỚI "SỐ PO" */
+    function updateRenamedFilePreview(gIdx) {
+      const grp = modalState.poGroups[gIdx];
+      const soPO = (grp.soPO || '').trim() || grp.autoPONumber || 'PO';
+      const previewEl = document.getElementById('renamedFilePreview_' + gIdx);
+      if (!previewEl) return;
+
+      if (grp.fileAttachment && grp.fileAttachment.extension) {
+        previewEl.textContent = soPO + '.' + grp.fileAttachment.extension;
+      } else if (grp.driveFileInfo && grp.driveFileInfo.name.indexOf('.') !== -1) {
+        const ext = grp.driveFileInfo.name.split('.').pop();
+        previewEl.textContent = soPO + '.' + ext;
+      } else {
+        previewEl.textContent = soPO;
+      }
+    }
+
+    function updateGroupField(gIdx, field, val) {
+      modalState.poGroups[gIdx][field] = val;
+      if (field === 'soPO') {
+        updateRenamedFilePreview(gIdx);
+      }
+    }
+
+    function updateItemField(gIdx, iIdx, field, val) {
+      const grp = modalState.poGroups[gIdx];
+      const item = grp.items[iIdx];
+
+      if (field === 'qty' || field === 'price') {
+        item[field] = parseRawNumber(val);
+        const lineTotal = (Number(item.qty) || 0) * (Number(item.price) || 0);
+        const cell = document.getElementById('lineTotal_' + gIdx + '_' + iIdx);
+        if (cell) cell.textContent = formatVND(lineTotal);
+        recalculateTotals();
+      } else if (field === 'giaKhuon') {
+        item.giaKhuon = parseRawNumber(val);
+      } else if (field === 'ngayGiao') {
+        item.ngayGiao = val;
+        item.deliveryDate = val;
+        grp.ngayGiaoDK = computeMaxDeliveryDate(grp.items, grp.ngayGiaoDK);
+        const maxEl = document.getElementById('maxDelivDisplay_' + gIdx);
+        if (maxEl) maxEl.textContent = grp.ngayGiaoDK;
+      } else {
+        item[field] = val;
+      }
+    }
+
+    function onGroupCustomerChange(gIdx, val, customerId) {
+      const grp = modalState.poGroups[gIdx];
+      const nameClean = String(val || '').trim();
+      const existing = modalState.customers.find(function(c) {
+        return customerId ? c.maKH === customerId : c.name.toLowerCase() === nameClean.toLowerCase();
+      });
+      if (webOrder && grp.items.some(function(item) {
+        return item.spId && (!existing || item.productCustomerId !== existing.maKH);
+      })) {
+        document.getElementById('poCustomer_' + gIdx).value = grp.customerName;
+        showStatus('Hãy bỏ các sản phẩm đã chọn từ danh mục trước khi đổi khách hàng của PO.', 'error');
+        return;
+      }
+      grp.customerName = webOrder && existing ? existing.name : nameClean;
+      grp.isNewCustomer = !existing;
+      grp.maKH = existing ? existing.maKH : '';
+
+      const yymmdd = modalState.serverDate.replace(/-/g, '').substring(2);
+      const slug = removeVietnameseTones(nameClean).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const suggestedPO = 'PO-' + yymmdd + '-' + (slug || 'KH');
+      const useSuggestedPO = !grp.soPO || (webOrder
+        ? grp.soPO === grp.autoPONumber
+        : grp.soPO.startsWith('PO-'));
+      grp.autoPONumber = suggestedPO;
+      if (useSuggestedPO) grp.soPO = suggestedPO;
+
+      if (webOrder) {
+        document.getElementById('poCustomer_' + gIdx).value = grp.customerName;
+        updateProductSuggestions(gIdx);
+        document.getElementById('poTitle_' + gIdx).textContent =
+          '📦 ĐƠN HÀNG PO #' + (gIdx + 1) + ' — KHÁCH HÀNG: ' + (grp.customerName || '(Chưa chọn)');
+        document.getElementById('soPO_' + gIdx).value = grp.soPO;
+        updateRenamedFilePreview(gIdx);
+      } else {
+        renderAllPOGroups();
+        recalculateTotals();
+      }
+    }
+
+    function onItemProductChange(gIdx, iIdx, val) {
+      const grp = modalState.poGroups[gIdx];
+      const item = grp.items[iIdx];
+      const pName = String(val || '').trim();
+      const key = pName.toLowerCase();
+      const matched = webOrder
+        ? grp.productChoices.get(key)
+        : modalState.products.find(function(p) {
+          return p.prodName.toLowerCase() === key && p.customerId === grp.maKH;
+        }) || modalState.products.find(function(p) {
+          return p.prodName.toLowerCase() === key;
+        });
+
+      if (webOrder && !matched && pName === item.prodName) return;
+      if (webOrder && !matched &&
+          [...grp.productChoices.values()].some(function(p) { return p.prodName.toLowerCase() === key; })) {
+        renderAllPOGroups();
+        recalculateTotals();
+        showStatus('Có nhiều sản phẩm trùng tên. Hãy chọn đúng mã sản phẩm trong danh sách gợi ý.', 'error');
+        return;
+      }
+
+      item.prodName = matched && webOrder ? matched.prodName : pName;
+
+      if (matched) {
+        item.spId = matched.spId;
+        item.codeSP = matched.codeSP || (!webOrder && item.codeSP) || '';
+        item.unit = matched.unit || 'Cái';
+        item.price = Number(matched.price) || 0;
+        item.mang = matched.mang || '';
+        item.type = matched.type || '1';
+        item.donggoi = matched.donggoi || '';
+        item.giaKhuon = Number(matched.giaKhuon) || 0;
+        item.isNew = false;
+        item.isNewProduct = false;
+        if (webOrder) {
+          item.productCustomerId = matched.customerId;
+          const customer = modalState.customersById.get(matched.customerId);
+          if (!grp.maKH && customer) onGroupCustomerChange(gIdx, customer.name, customer.maKH);
+        }
+      } else {
+        if (webOrder && item.spId) {
+          const {codeSP, unit, price, mang, type, donggoi, giaKhuon} = blankOrderGroup.items[0];
+          Object.assign(item, {codeSP, unit, price, mang, type, donggoi, giaKhuon});
+        }
+        item.productCustomerId = '';
+        item.spId = '';
+        item.isNew = true;
+        item.isNewProduct = true;
+      }
+
+      renderAllPOGroups();
+      recalculateTotals();
+    }
+
+    function removeItemRow(gIdx, iIdx) {
+      const grp = modalState.poGroups[gIdx];
+      if (grp.items.length <= 1) {
+        showStatus('⚠️ Mỗi đơn hàng PO phải có tối thiểu 1 dòng sản phẩm!', 'error');
+        return;
+      }
+      grp.items.splice(iIdx, 1);
+      grp.ngayGiaoDK = computeMaxDeliveryDate(grp.items, modalState.defaultDeliveryDate);
+      renderAllPOGroups();
+      recalculateTotals();
+    }
+
+    function toggleDetailRow(gIdx, iIdx) {
+      const row = document.getElementById('detailRow_' + gIdx + '_' + iIdx);
+      if (row) {
+        row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
+      }
+    }
+
+    function recalculateTotals() {
+      let grandTotalAll = 0;
+      modalState.poGroups.forEach(function(grp, gIdx) {
+        const subTotal = grp.items.reduce(function(sum, it) {
+          return sum + ((Number(it.qty) || 0) * (Number(it.price) || 0));
+        }, 0);
+        grandTotalAll += subTotal;
+        const subBadge = document.getElementById('poSubtotal_' + gIdx);
+        if (subBadge) subBadge.textContent = 'Thành tiền PO: ' + formatVND(subTotal);
+      });
+      const grandEl = document.getElementById('grandTotalAllBadge');
+      if (grandEl) grandEl.textContent = 'Tổng giá trị: ' + formatVND(grandTotalAll);
+    }
+
+    function computeMaxDeliveryDate(items, fallbackDate) {
+      let maxD = '';
+      (items || []).forEach(function(it) {
+        const d = it.ngayGiao || it.deliveryDate || '';
+        if (d && (!maxD || d > maxD)) maxD = d;
+      });
+      return maxD || fallbackDate;
+    }
+
+    let pendingSaveId;
+    let pendingSaveContent;
+
+    function handleSaveOrder() {
+      const poCustomerMap = Object.create(null);
+      const btnSave = document.getElementById('btnSaveOrder');
+      if (btnSave.disabled) return;
+
+      if (!modalState.poGroups || modalState.poGroups.length === 0) {
+        showStatus('⚠️ Không có dữ liệu đơn hàng nào để lưu!', 'error');
+        return;
+      }
+
+      for (let g = 0; g < modalState.poGroups.length; g++) {
+        const grp = modalState.poGroups[g];
+        if (grp.fileReader) {
+          showStatus('Đang đọc tệp đính kèm. Vui lòng chờ rồi lưu lại.', 'loading');
+          return;
+        }
+        const po = String(grp.soPO || '').trim();
+        const cust = String(grp.customerName || '').trim();
+
+        if (!cust) {
+          showStatus('⚠️ Đơn PO #' + (g + 1) + ': Vui lòng nhập hoặc chọn Khách hàng!', 'error');
+          return;
+        }
+        if (!po) {
+          showStatus('⚠️ Đơn PO #' + (g + 1) + ' (' + cust + '): Vui lòng nhập Số PO!', 'error');
+          return;
+        }
+        if (!grp.salesPerson || !String(grp.salesPerson).trim()) {
+          showStatus('⚠️ Đơn PO #' + (g + 1) + ' (' + po + '): Vui lòng chọn Nhân viên Kinh doanh phụ trách!', 'error');
+          return;
+        }
+
+        const poUpper = po.toUpperCase();
+        if (webOrder && poCustomerMap[poUpper]) {
+          showStatus('Số PO "' + po + '" đã có trong đợt này. Hãy gộp các dòng sản phẩm vào cùng một PO hoặc nhập số PO khác.', 'error');
+          return;
+        }
+        if (poCustomerMap[poUpper] && poCustomerMap[poUpper] !== cust.toLowerCase()) {
+          showStatus('⚠️ Lỗi: Số PO "' + po + '" đang bị dùng chung cho 2 khách hàng khác nhau!', 'error');
+          return;
+        }
+        poCustomerMap[poUpper] = cust.toLowerCase();
+
+        if (!grp.items.length) {
+          showStatus('Đơn PO "' + po + '": Cần ít nhất một dòng sản phẩm.', 'error');
+          return;
+        }
+        for (let i = 0; i < grp.items.length; i++) {
+          const it = grp.items[i];
+          if (!it.prodName || !String(it.prodName).trim()) {
+            showStatus('⚠️ Đơn PO "' + po + '" - Dòng #' + (i + 1) + ': Tên sản phẩm không được để trống!', 'error');
+            return;
+          }
+          if (!it.unit || !String(it.unit).trim()) {
+            showStatus('⚠️ Đơn PO "' + po + '" - Dòng #' + (i + 1) + ': Đơn vị tính không được để trống!', 'error');
+            return;
+          }
+          if (!Number.isFinite(it.qty) || it.qty <= 0) {
+            showStatus('⚠️ Đơn PO "' + po + '" - Dòng #' + (i + 1) + ' (' + it.prodName + '): Số lượng đặt phải > 0!', 'error');
+            return;
+          }
+          if (!Number.isFinite(it.price) || it.price < 0) {
+            showStatus('⚠️ Đơn PO "' + po + '" - Dòng #' + (i + 1) + ' (' + it.prodName + '): Đơn giá phải >= 0 VNĐ!', 'error');
+            return;
+          }
+          if (!Number.isFinite(it.giaKhuon ?? 0) || it.giaKhuon < 0 || !['1', '2'].includes(String(it.type || '1'))) {
+            showStatus('Đơn PO "' + po + '" - Dòng #' + (i + 1) + ': Kiểm tra giá khuôn và loại gia công.', 'error');
+            return;
+          }
+          if (!it.ngayDat || !it.ngayGiao) {
+            showStatus('⚠️ Đơn PO "' + po + '" - Dòng #' + (i + 1) + ': Vui lòng nhập đầy đủ Ngày đặt và Ngày giao!', 'error');
+            return;
+          }
+          if (it.ngayGiao < it.ngayDat) {
+            showStatus('⚠️ Đơn PO "' + po + '" - Dòng #' + (i + 1) + ': Ngày hẹn giao không được nhỏ hơn Ngày đặt!', 'error');
+            return;
+          }
+        }
+      }
+
+      setOrderSaving(true);
+      showStatus('⏳ Đang thực thi giao dịch lưu đơn hàng...', 'loading');
+
+      const payload = {
+        webOrder: webOrder,
+        poGroups: modalState.poGroups.map(function(grp) {
+          const maxDeliv = computeMaxDeliveryDate(grp.items, grp.ngayGiaoDK || modalState.defaultDeliveryDate);
+          return {
+            customerName: String(grp.customerName || '').trim(),
+            customerId: webOrder ? grp.maKH : '',
+            soPO: String(grp.soPO || '').trim(),
+            salesPerson: String(grp.salesPerson || '').trim(),
+            ngayDat: grp.items[0] ? grp.items[0].ngayDat : (grp.ngayDat || modalState.serverDate),
+            ngayGiaoDK: maxDeliv,
+            orderNote: String(grp.orderNote || '').trim(),
+            existingFileUrl: grp.existingFileUrl || '',
+            fileData: grp.fileAttachment ? {
+              fileName: grp.fileAttachment.fileName,
+              mimeType: grp.fileAttachment.mimeType,
+              base64: grp.fileAttachment.base64
+            } : null,
+            items: grp.items.map(function(it) {
+              return {
+                prodName: String(it.prodName || '').trim(),
+                spId: webOrder ? it.spId : '',
+                codeSP: String(it.codeSP || '').trim(),
+                unit: String(it.unit).trim(),
+                qty: Number(it.qty) || 0,
+                price: Number(it.price) || 0,
+                giaKhuon: Number(it.giaKhuon) || 0,
+                mang: String(it.mang || '').trim(),
+                type: String(it.type || '1').trim(),
+                donggoi: String(it.donggoi || '').trim(),
+                ngayDat: String(it.ngayDat || modalState.serverDate).trim(),
+                ngayGiao: String(it.ngayGiao || modalState.defaultDeliveryDate).trim(),
+                note: String(it.note || '').trim(),
+                isNew: Boolean(it.isNew || it.isNewProduct)
+              };
+            })
+          };
+        })
+      };
+
+      const content = JSON.stringify(payload);
+      if (pendingSaveContent !== content) {
+        pendingSaveContent = content;
+        pendingSaveId = crypto.randomUUID();
+      }
+      payload.requestId = pendingSaveId;
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res && res.success) {
+            const savedLink = document.getElementById('savedOrderLink');
+            if (savedLink) {
+              btnSave.textContent = 'Đã lưu đơn hàng';
+              btnSave.hidden = true;
+              openSavedOrders(res, payload, savedLink);
+              return;
+            }
+            showStatus('✅ ' + res.message, 'success');
+            setTimeout(function() {
+              closeModalWindow();
+            }, 800);
+          } else {
+            setOrderSaving(false);
+            const errMsg = (res && res.error && res.error.message) ? res.error.message : (res && res.message ? res.message : 'Lỗi không xác định');
+            showStatus('❌ Lỗi khi lưu: ' + errMsg, 'error');
+          }
+        })
+        .withFailureHandler(function(err) {
+          setOrderSaving(false);
+          showStatus('❌ Lỗi hệ thống: ' + (err && err.message ? err.message : String(err)), 'error');
+        })
+        .saveOrderTransaction(payload);
+    }
+
+    function openSavedOrders(result, payload, link) {
+      const orders = result.createdOrders || [];
+      const codes = orders.map(function(order) { return order.maDH; });
+      const types = new Set(payload.poGroups.flatMap(function(group) {
+        return group.items.map(function(item) { return item.type === '2' ? '2' : '1'; });
+      }));
+      const params = {
+        view: types.has('1') ? 'list' : 'be',
+        orders: codes.join(','),
+        po: orders.map(function(order) { return order.soPO; }).filter(Boolean).join(', '),
+        mixed: types.size > 1 ? '1' : ''
+      };
+
+      const url = new URL(link.dataset.appUrl);
+      url.search = new URLSearchParams(params).toString();
+      link.href = url.href;
+      link.hidden = false;
+      showStatus('✅ ' + result.message + (codes.length ? ' Mã đơn ' + codes.join(', ') : ''), 'success');
+
+      google.script.run
+        .withSuccessHandler(function(html) {
+          const page = new DOMParser().parseFromString(html, 'text/html');
+          if (!page.getElementById('savedOrderSummary')) return;
+          const scripts = Array.from(page.querySelectorAll('script'));
+          scripts.forEach(function(script) { script.remove(); });
+
+          // Đổi màn hình trong iframe hiện tại để giữ kết nối google.script.run.
+          document.head.replaceChildren(...page.head.childNodes);
+          document.body.className = page.body.className;
+          document.body.dataset.productType = page.body.dataset.productType;
+          document.body.replaceChildren(...page.body.childNodes);
+          scripts.forEach(function(source) {
+            const script = document.createElement('script');
+            if (source.src) script.src = source.src;
+            else script.textContent = source.textContent;
+            document.body.appendChild(script);
+          });
+          google.script.history.replace(null, params, '');
+        })
+        .withFailureHandler(function() {
+          showStatus('✅ ' + result.message + ' Bấm Xem đơn vừa tạo để mở danh sách.', 'success');
+        })
+        .getSavedOrderListPage(params);
+    }
+
+    function setOrderSaving(saving) {
+      const button = document.getElementById('btnSaveOrder');
+      button.disabled = saving;
+      button.textContent = saving ? '⏳ Đang lưu đơn hàng...' : '💾 XÁC NHẬN & LƯU TẤT CẢ VÀO DATABASE';
+      if (webOrder) {
+        document.getElementById('btnAddPO').disabled = saving;
+        document.getElementById('poGroupsContainer').inert = saving;
+      }
+    }
+
+    function closeModalWindow() {
+      if (typeof google !== 'undefined' && google.script && google.script.host) {
+        google.script.host.close();
+      }
+    }
+
+    function formatDateIso(d) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return yyyy + '-' + mm + '-' + dd;
+    }
+
+    function formatNumber(num) {
+      if (num === '' || num === null || num === undefined) return '';
+      const n = Number(num);
+      return isNaN(n) ? num : n.toLocaleString('vi-VN', {maximumFractionDigits: 20});
+    }
+
+    function parseRawNumber(str) {
+      if (str === '' || str === null || str === undefined) return 0;
+      const input = String(str).trim();
+      if (!input) return 0;
+      if (!/^-?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?$/.test(input)) return input;
+      const value = Number(input.replace(/\./g, '').replace(',', '.'));
+      return Number.isFinite(value) ? value : input;
+    }
+
+    function formatVND(num) {
+      return (Number(num) || 0).toLocaleString('vi-VN') + ' ₫';
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function removeVietnameseTones(str) {
+      if (!str) return '';
+      return String(str)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D');
+    }
+
+    function showStatus(msg, type) {
+      const box = document.getElementById('statusBox');
+      box.style.display = 'block';
+      box.className = 'status-box status-' + type;
+      box.textContent = msg;
+    }
+
+    function hideStatus() {
+      const box = document.getElementById('statusBox');
+      if (box) box.style.display = 'none';
+    }
+  </script>
+</body>
+</html>

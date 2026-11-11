@@ -5,7 +5,7 @@ down_revision = '001'
 
 
 def upgrade():
-    from app.film_initial_schema import metadata
+    from app.migrations.snapshots.v002 import metadata
     metadata.create_all(bind=op.get_bind())
 
 

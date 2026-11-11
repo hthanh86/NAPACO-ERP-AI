@@ -39,10 +39,8 @@ services:
       DB_USER: ${MYSQL_USER:?}
       DB_PASSWORD: ${MYSQL_PASSWORD:?}
     volumes:
-      - ./source-appscript:/app/source-appscript:ro
       - ./frontend:/app/frontend:ro
       - ./data:/app/data:ro
-      - ./source-appscript/schema.json:/app/schema.json:ro
       - ./reports:/app/reports
 volumes:
   mysql84_data:

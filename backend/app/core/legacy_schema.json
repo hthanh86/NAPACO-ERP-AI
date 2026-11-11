@@ -1,0 +1,327 @@
+{
+  "DEBUG_MODE": true,
+  "TIMEZONE": "Asia/Ho_Chi_Minh",
+  "ID_MASTER": "1v4gg-9FcB2bxPa1w6gWVYkjlIFumcwacadUiuc77I1Y",
+  "ID_OPERATION": "1GLmBtMQ7uqZPgYuyMhHo1AYx1GWkraC3ebt0WgKn44c",
+  "ID_STORAGES": "1fiPuD9FkNE_cYVvtfiUsg3KHBz5zX-L6",
+  "PROPERTY_KEYS": {
+    "ID_MASTER": "NAPACO_ID_MASTER",
+    "ID_OPERATION": "NAPACO_ID_OPERATION",
+    "ID_STORAGES": "NAPACO_ID_STORAGES"
+  },
+  "SHEET_NAMES": {
+    "SETTINGS": "00.Config",
+    "CUSTOMERS": "01_KHACH_HANG",
+    "PRODUCTS": "02_SAN_PHAM",
+    "EMPLOYEES": "07.NhanVien",
+    "PERMISSIONS": "08.MaTranQuyen",
+    "FILM_PO": "DAT_NHUA_PO",
+    "FILM_LINES": "DAT_NHUA",
+    "FILM_MATERIALS": "04_ThongSoVatLieu",
+    "FILM_MATERIALS_LEGACY": "01_04_ThongSoVatLieu",
+    "FILM_SUPPLIERS": "03.DM_NhaCungCap",
+    "FILM_SUPPLIERS_LEGACY": "01_03_DM_NhaCungCap",
+    "FILM_RECEIPTS": "KHO-FM-01A_NHAP_NVL",
+    "FILM_MOVEMENTS": "KHO-FM-01B_CAPTRA",
+    "FORMING_LOG": "05.NHAT_KY_HUT",
+    "ORDERS": "01.DonHang",
+    "ORDER_DETAILS": "02.ChiTietDH",
+    "ORDER_WORKSPACE": "TAO DON",
+    "CACHE_CATALOG": "_CACHE_DANH_MUC",
+    "TOOLS": "05.Cong_Cu"
+  },
+  "ORDER_STATUS": {
+    "NEW": "Mới",
+    "IN_PRODUCTION": "Đang sản xuất",
+    "COMPLETED": "Hoàn tất",
+    "CANCELLED": "Hủy"
+  },
+  "LINE_STATUS": {
+    "NEW": "Chờ sản xuất",
+    "MOLDING": "Đang làm khuôn",
+    "IN_PRODUCTION": "Đang sản xuất",
+    "COMPLETED": "Xong",
+    "CLOSED": "Kết thúc"
+  },
+  "DEPARTMENTS": {
+    "SALES": "Kinh doanh",
+    "PLANNING": "Kế hoạch",
+    "ACCOUNTING": "Kế toán",
+    "TECHNICAL": "Kỹ thuật"
+  },
+  "EMPLOYEE_STATUS": {
+    "ACTIVE": "Đang hoạt động",
+    "LOCKED": "Tạm khóa"
+  },
+  "MOLD_STATUS": {
+    "BROKEN": "Hong",
+    "NORMAL": "Bình thường"
+  },
+  "MOLD_TYPES": {
+    "FORMING": "KhuonDinhHinh",
+    "CUTTING": "KhuonDao"
+  },
+  "KANBAN_ZONES": {
+    "IN_PRODUCTION": "DANG_SAN_XUAT",
+    "PRIORITY": "UU_TIEN",
+    "PENDING": "CHO_SAN_XUAT"
+  },
+  "FILTER_STATUS_GROUPS": {
+    "ACTIVE_ALL": "ACTIVE_ALL",
+    "DONE_ALL": "DONE_ALL",
+    "ALL": "ALL"
+  },
+  "MAX_DISPLAY_RECORDS": 100,
+  "MAX_FILE_SIZE_BYTES": 15728640,
+  "FORM_COLUMNS": {
+    "HEADER_ROW": 7,
+    "DATA_START_ROW": 8,
+    "ALIASES": {
+      "CUSTOMER": [
+        "1. Khách Hàng (Bắt buộc)",
+        "1. Khách Hàng",
+        "Khách Hàng",
+        "Tên Khách Hàng",
+        "Khach Hang"
+      ],
+      "PRODUCT": [
+        "2. Sản Phẩm (Bắt buộc)",
+        "2. Sản Phẩm",
+        "Sản Phẩm",
+        "Tên Sản Phẩm",
+        "San Pham"
+      ],
+      "CODE": [
+        "3. Code SP",
+        "Code SP",
+        "Code Sản Phẩm",
+        "Mã SP"
+      ],
+      "UNIT": [
+        "4. Đơn Vị",
+        "Đơn Vị",
+        "ĐVT",
+        "DVT"
+      ],
+      "PRICE": [
+        "5. Đơn Giá (₫)",
+        "Đơn Giá (₫)",
+        "Đơn Giá",
+        "Giá Bán",
+        "Giá"
+      ],
+      "QTY": [
+        "6. Số Lượng",
+        "Số Lượng",
+        "SL"
+      ],
+      "PO": [
+        "7. Số PO",
+        "Số PO",
+        "PO",
+        "So_PO"
+      ],
+      "NOTE": [
+        "8. Ghi Chú Đơn Hàng",
+        "8. Ghi Chú",
+        "Ghi Chú Đơn Hàng",
+        "Ghi Chú",
+        "Ghi chu"
+      ],
+      "LINK_PO": [
+        "9. Link File PO (Drive)",
+        "9. Link PO",
+        "Link File PO",
+        "Link PO",
+        "Link"
+      ]
+    }
+  },
+  "COLUMNS": {
+    "SETTINGS": {
+      "UNITS": "Danh sách ĐVT",
+      "FILM_COLORS": "DM_MAU_SAC",
+      "RESINS": "Loại nhựa",
+      "GRADES": "Cấp độ",
+      "DENSITY_RESIN": "DM_TY_TRONG_NHUA",
+      "DENSITY": "Ty_Trong"
+    },
+    "FILM_PO": {
+      "ID": "PO_NVL_ID",
+      "DATE": "Ngay_Dat",
+      "SUPPLIER": "Ma_NCC",
+      "USER": "Nguoi_Dat",
+      "NOTE": "Ghi_Chu",
+      "STATUS": "Trang_Thai"
+    },
+    "FILM_LINES": {
+      "ID": "DN_ID",
+      "RESIN": "Loai_Nhua",
+      "MATERIAL_ID": "VL_ID",
+      "QTY": "So_Luong",
+      "PRICE": "Don_Gia",
+      "NOTE": "Ghi_Chu",
+      "STATUS": "Trang_Thai",
+      "PO_ID": "PO_NVL_ID",
+      "DELIVERY": "Ngay_Giao_Du_Kien",
+      "DATE": "Ngay_Dat",
+      "SUPPLIER": "Ma_NCC"
+    },
+    "FILM_MATERIALS": {
+      "ID": "VL_ID",
+      "GRADE": "Cấp Độ",
+      "COLOR": "Màu Sắc",
+      "ESD": "Tĩnh Điện",
+      "THICKNESS": "Độ Dày",
+      "WIDTH": "Khổ Nhựa"
+    },
+    "FILM_SUPPLIERS": {
+      "ID": "Ma_NCC",
+      "NAME": "Ten_NCC",
+      "TYPE": "Loai_Cung_Cap"
+    },
+    "FILM_MOVEMENTS": {
+      "ID": "MV_NVL_ID",
+      "DATE": "Ngay_Gio",
+      "TYPE": "Loai_GD",
+      "ORDER_ID": "ID_Lenh_SX",
+      "RECEIPT_ID": "N_NVL_ID",
+      "QC_ID": "QC_ID",
+      "QTY": "So_KG",
+      "ISSUER": "Nguoi_Cap",
+      "RECEIVER": "Nguoi_Nhan",
+      "NOTE": "Ghi_Chu"
+    },
+    "FORMING_LOG": {
+      "MOVEMENT_ID": "MV_NVL_ID",
+      "WEIGHT": "Trong_Luong_bia",
+      "GOOD": "SL_Bia_Thuc_Te_Dat",
+      "NG": "SL_NG_Trong_Ca"
+    },
+    "FILM_RECEIPTS": {
+      "ID": "N_NVL_ID",
+      "DATE": "Ngay_Nhan",
+      "PRODUCTION_DATE": "Ngay_San_Xuat",
+      "LINE_ID": "DN_ID",
+      "ROLLS": "So_Cuon_Nhan",
+      "QTY": "So_KG_Nhan",
+      "LOCATION": "Vi_Tri",
+      "STATUS": "Trang_Thai",
+      "USER": "Nguoi_Nhap",
+      "IQC_ID": "IQC_QC_ID",
+      "NOTE": "Ghi_Chu"
+    },
+    "CUSTOMERS": {
+      "ID": "Ma_KH",
+      "NAME": "name",
+      "ADDRESS": "address",
+      "CONTACTER": "contacter",
+      "PHONE": "phone"
+    },
+    "PRODUCTS": {
+      "ID": "SP_ID",
+      "CUSTOMER_ID": "customer_id",
+      "FILM": "mang",
+      "TYPE": "type",
+      "CODE_CUST": "Code_Sanpham",
+      "NAME": "name_napaco",
+      "CAVITY": "cavity",
+      "STOCK": "tonkho",
+      "UNIT": "donvi",
+      "LENGTH": "dai",
+      "WIDTH": "rong",
+      "HEIGHT": "cao",
+      "IMAGE": "imageURL",
+      "PACKING": "donggoi",
+      "MOLD_PRICE": "Gia Khuon",
+      "PRICE": "dongia"
+    },
+    "EMPLOYEES": {
+      "ID": "Ma_NV",
+      "NAME": "name",
+      "DEPARTMENT": "phong_ban",
+      "ROLE": "role",
+      "EMAIL": "email",
+      "PHONE": "sdt",
+      "ACCESS": "quyen_truy_cap",
+      "STATUS": "trang_thai"
+    },
+    "ORDERS": {
+      "ID": "Ma_DH",
+      "CUSTOMER_ID": "MaKH",
+      "ORDER_DATE": "NgayDat",
+      "DELIVERY_DATE": "NgayGiaoDK",
+      "PO_NUMBER": "So_PO",
+      "FILE_URL": "File_PO"
+    },
+    "ORDER_DETAILS": {
+      "ID": "ID_Chi_Tiet",
+      "FILM_LINE_ID": "DN_ID",
+      "ORDER_ID": "ID_DonHang",
+      "PRODUCT_ID": "Ma_SP",
+      "QTY_ORDER": "So_Luong_Dat",
+      "PRICE": "Don_Gia",
+      "QTY_RUN": "So_Luong_Da_Chay",
+      "QTY_DELIVERED": "SL_Da_Giao",
+      "QTY_REMAINING": "SL_Con_Lai",
+      "NOTE": "Ghi_Chu",
+      "DELIVERY_DATE": "Ngay_Giao",
+      "STAFF_ID": "Ma_NV",
+      "STATUS": "Trang_Thai",
+      "UNIT": "dvt",
+      "KANBAN_ZONE": "Vung_Hien_Thi",
+      "PRIORITY_ORDER": "Thu_Tu_Uu_Tien"
+    },
+    "TOOLS": {
+      "SP_ID": "MaSP",
+      "TOOL_TYPE": "LoaiCC",
+      "MOLD_CODE": "Ma_Khuon",
+      "LENGTH": "Dai_Khuon",
+      "WIDTH": "Rong_Khuon",
+      "CAVITY": "Cavity",
+      "STATUS": "Trang_Thai"
+    }
+  },
+  "EMPLOYEE_HEADER_ALIASES": {
+    "ID": [
+      "mã nv"
+    ],
+    "NAME": [
+      "họ và tên",
+      "tên nv"
+    ],
+    "DEPARTMENT": [
+      "phòng ban"
+    ],
+    "STATUS": [
+      "trạng thái"
+    ]
+  },
+  "PERMISSIONS": {
+    "ORDER_CREATE": "ORDER_CREATE",
+    "ORDER_EDIT": "ORDER_EDIT",
+    "FILM_PO_VIEW": "FILM_PO_VIEW",
+    "FILM_PO_CREATE": "FILM_PO_CREATE",
+    "FILM_PO_EDIT": "FILM_PO_EDIT",
+    "FILM_PO_ASSIGN": "FILM_PO_ASSIGN",
+    "FILM_PO_CANCEL": "FILM_PO_CANCEL",
+    "NVL_RECEIVE": "NVL_RECEIVE",
+    "NVL_STOCK_VIEW": "NVL_STOCK_VIEW",
+    "PRODUCTION_EDIT": "PRODUCTION_EDIT"
+  },
+  "DEFAULT_DELIVERY_DAYS": 10,
+  "DEFAULT_STATUS_DETAIL": "Chờ sản xuất",
+  "ORDER_CODE_PREFIX": "PO-",
+  "FILTER_STATUS_GROUPS_LIST": {
+    "ACTIVE_ALL": [
+      "Chờ sản xuất",
+      "Đang làm khuôn",
+      "Đang sản xuất"
+    ],
+    "DONE_ALL": [
+      "Xong",
+      "Kết thúc",
+      "Hủy"
+    ]
+  }
+}

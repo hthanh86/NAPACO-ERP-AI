@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head><base target="_top"><meta charset="utf-8">
+<style>
+*{box-sizing:border-box}body{font:14px 'Segoe UI',Arial,sans-serif;color:#0f172a}main{min-width:0;padding:24px}h1{font-size:24px;margin:0;color:#1e3a5f}.subtitle{color:#64748b;margin:8px 0 20px}.panel{background:white;border:1px solid #dbe2ec;border-radius:10px;padding:18px;margin-bottom:16px}.filters{display:flex;flex-wrap:wrap;gap:14px;align-items:end}label{display:grid;gap:6px;font-size:13px;font-weight:600}input,select,button{font:inherit;border:1px solid #cbd5e1;border-radius:6px;padding:9px;background:white;color:inherit}input{width:100px}select{max-width:240px}button{cursor:pointer}.primary{background:#2563eb;color:white;border-color:#2563eb}button:disabled{opacity:.6;cursor:wait}.range{display:flex;align-items:center;gap:6px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:1050px}th{text-align:left;background:#f1f5f9;color:#334155;font-size:12px;white-space:nowrap}th,td{padding:14px 12px;border-bottom:1px solid #e2e8f0;vertical-align:top}td{line-height:1.6}small{display:block;color:#64748b}.spec{font-weight:700;color:#1d4ed8}.amount{font-weight:700;font-size:17px;color:#047857}.badge{display:inline-block;background:#eaf2ff;color:#1d4ed8;border-radius:4px;padding:1px 6px;font-size:12px}.warning{color:#b91c1c}.summary{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;color:#475569}#message{color:#991b1b;margin:12px 0}[hidden]{display:none!important}@media(max-width:600px){main{padding:14px}.panel{padding:12px}}
+</style></head>
+<body class="erp-shell">
+<?!= renderOrderMenu_(appUrl, 'film-stock') ?>
+<main><h1>Tồn Kho NVL</h1><p class="subtitle">Màng nhựa theo từng lần nhập kho</p>
+<form id="filters" class="panel filters">
+<label>Độ dày (mm)<span class="range"><input id="thicknessMin" type="number" min="0" step="any" placeholder="Min" aria-label="Độ dày tối thiểu">~<input id="thicknessMax" type="number" min="0" step="any" placeholder="Max" aria-label="Độ dày tối đa"></span></label>
+<label>Khổ màng (mm)<span class="range"><input id="widthMin" type="number" min="0" step="any" placeholder="Min" aria-label="Khổ tối thiểu">~<input id="widthMax" type="number" min="0" step="any" placeholder="Max" aria-label="Khổ tối đa"></span></label>
+<label>Trạng thái<select id="status"><option value="">Tất cả dữ liệu đã tải</option><option value="available" selected>Còn Tồn</option><option value="empty">Hết Tồn</option></select></label>
+<label>Nhà cung cấp<select id="supplier"><option value="">Tất cả nhà cung cấp</option></select></label>
+<button class="primary" type="submit">Tìm kiếm</button><button type="button" id="reset">Đặt lại</button>
+</form>
+<p class="subtitle">Nhập điều kiện để lọc dữ liệu đã tải. Bấm Tìm kiếm để lấy dữ liệu từ kho; Đặt lại chỉ xóa điều kiện.</p>
+<div id="message" role="alert"></div>
+<section class="panel" id="pendingPanel" hidden><h2 style="font-size:17px;color:#b91c1c;margin-top:0">Phiếu trả chờ thủ kho nhận</h2><p>Chỉ xác nhận sau khi đã nhận lại màng thực tế. Số kg chờ trả chưa cộng vào tồn kho.</p><div class="scroll"><table><thead><tr><th>Phiếu trả</th><th>Lệnh SX</th><th>Số kg trả</th><th>Ghi chú</th><th>Nhận lại kho</th></tr></thead><tbody id="pendingRows"></tbody></table></div></section>
+<section class="panel" aria-busy="false" id="results"><div class="summary"><span id="count" role="status">Đang tải…</span><span id="total"></span></div>
+<div class="scroll"><table><thead><tr><th>Ngày nhập</th><th>Ngày sản xuất</th><th>Sản phẩm · Type</th><th>Nhựa & quy cách</th><th>Số lượng</th><th>Nhà cung cấp & giá</th><th>Ghi chú khi đặt</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+</main><script>
+(() => {
+const $=id=>document.getElementById(id), keys=['thicknessMin','thicknessMax','widthMin','widthMax','status','supplier'];
+let loadedData=null;
+const num=value=>Number(value).toLocaleString('vi-VN',{maximumFractionDigits:3});
+const date=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)?value.split('-').reverse().join('/'):(value||'—');
+const node=(tag,text,cls)=>{const el=document.createElement(tag);el.textContent=text;if(cls)el.className=cls;return el};
+function busy(value){$('results').setAttribute('aria-busy',String(value));document.querySelectorAll('#filters button').forEach(el=>el.disabled=value)}
+function render(data){
+$('pendingPanel').hidden=!data.pendingReturns.length;$('pendingRows').replaceChildren();
+for(const pending of data.pendingReturns){
+ const tr=document.createElement('tr');
+ for(const text of [pending.id,pending.orderId||'—',num(pending.kg)+' kg',pending.note||'—'])tr.append(node('td',text));
+ const td=document.createElement('td');
+ if(data.canConfirm){const button=node('button','Đã nhận đủ '+num(pending.kg)+' kg','primary');button.type='button';button.onclick=()=>{
+   document.querySelectorAll('#pendingRows button').forEach(el=>el.disabled=true);
+   google.script.run.withSuccessHandler(()=>{document.dispatchEvent(new Event('film-return-changed'));load()}).withFailureHandler(error=>{$('message').textContent=error.message||String(error);document.querySelectorAll('#pendingRows button').forEach(el=>el.disabled=false)}).confirmFilmReturn({id:pending.id,kg:pending.kg});
+ };td.append(button)}else td.append(node('small','Cần quyền nhận NVL'));
+ tr.append(td);$('pendingRows').append(tr);
+}
+
+$('rows').replaceChildren();let sum=0;
+for(const row of data.rows){
+const tr=document.createElement('tr');const cell=()=>{const td=document.createElement('td');tr.append(td);return td};
+let td=cell();td.append(node('strong',date(row.date)),node('small',row.lineId));
+cell().append(node('div',date(row.productionDate)));
+td=cell();if(!row.products.length)td.append(node('span','Chưa gán sản phẩm'));for(const p of row.products)td.append(node('div',p.name),node('span',p.type,'badge'));
+td=cell();td.append(node('div',[row.resin,row.grade,row.color].filter(Boolean).join(' · ')||'—'),node('small',row.esd||'—'),node('div',row.spec,'spec'));
+td=cell();td.append(node('div',num(row.stock),row.stock<0?'amount warning':'amount'),node('small','Nhận: '+num(row.received)+' kg · '+row.rolls+' cuộn'));
+if(row.pending)td.append(node('small','Chờ nhận trả: '+num(row.pending)+' kg','warning'));
+if(row.stock<0)td.append(node('small','Cần kiểm tra: số cấp vượt tồn','warning'));
+td=cell();td.append(node('div',row.supplier||'—'),node('small',row.price===''?'Chưa có đơn giá':num(row.price)+' ₫/kg'));
+cell().append(node('div',row.note||'—'));$('rows').append(tr);sum+=row.stock;
+}
+if(!data.rows.length){const tr=document.createElement('tr'),td=node('td','Không có màng phù hợp với điều kiện tìm kiếm.');td.colSpan=7;tr.append(td);$('rows').append(tr)}
+$('count').textContent=num(data.rows.length)+' / '+num(loadedData.rows.length)+' lần nhập đã tải'+(loadedData.total>loadedData.rows.length?' — giới hạn 1.000 lần nhập hết tồn mới nhất':'');
+$('total').textContent='Tổng tồn hiển thị: '+num(sum)+' kg';
+}
+function applyLocalFilters(){
+if(!loadedData)return;
+const filters=Object.fromEntries(keys.map(key=>[key,$(key).value]));
+const invalid=['thickness','width'].some(key=>filters[key+'Min']!==''&&filters[key+'Max']!==''&&Number(filters[key+'Min'])>Number(filters[key+'Max']));
+$('message').textContent=invalid?'Giá trị min phải nhỏ hơn hoặc bằng max.':'';
+const rows=invalid?[]:loadedData.rows.filter(row=>{
+ if(filters.status==='available'&&row.stock<=0)return false;
+ if(filters.status==='empty'&&row.stock>0)return false;
+ if(filters.supplier&&row.supplierId!==filters.supplier)return false;
+ return ['thickness','width'].every(key=>{
+  const value=row[key];
+  return (filters[key+'Min']===''||(value!==null&&Number.isFinite(value)&&value>=Number(filters[key+'Min'])))&&
+   (filters[key+'Max']===''||(value!==null&&Number.isFinite(value)&&value<=Number(filters[key+'Max'])));
+ });
+});
+render({...loadedData,rows});
+}
+function load(){
+if(!$('filters').reportValidity())return;
+for(const key of ['thickness','width'])if($(key+'Min').value!==''&&$(key+'Max').value!==''&&Number($(key+'Min').value)>Number($(key+'Max').value)){$('message').textContent='Giá trị min phải nhỏ hơn hoặc bằng max.';return}
+busy(true);$('message').textContent='';$('count').textContent='Đang tải…';
+google.script.run.withSuccessHandler(data=>{
+ busy(false);loadedData=data;
+ const previous=$('supplier').value;$('supplier').replaceChildren(new Option('Tất cả nhà cung cấp',''));
+ data.suppliers.forEach(s=>$('supplier').add(new Option(s.name,s.id)));$('supplier').value=previous;
+ applyLocalFilters();
+}).withFailureHandler(error=>{busy(false);$('count').textContent='Chưa tải được dữ liệu';if(loadedData)applyLocalFilters();$('message').textContent=error.message||String(error)}).getFilmStock(Object.fromEntries(keys.map(key=>[key,$(key).value])));
+}
+$('filters').onsubmit=event=>{event.preventDefault();load()};
+$('filters').addEventListener('input',applyLocalFilters);
+$('filters').addEventListener('change',applyLocalFilters);
+$('reset').onclick=()=>{keys.forEach(key=>$(key).value='');$('message').textContent='';applyLocalFilters()};
+load();
+})();
+</script></body></html>
