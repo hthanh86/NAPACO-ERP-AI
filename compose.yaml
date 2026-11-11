@@ -22,6 +22,9 @@ services:
       start_period: 30s
   backend:
     build: ./backend
+    env_file:
+      - path: .google.env
+        required: false
     container_name: napaco-backend
     restart: unless-stopped
     depends_on:
@@ -36,6 +39,7 @@ services:
       DB_USER: ${MYSQL_USER:?}
       DB_PASSWORD: ${MYSQL_PASSWORD:?}
     volumes:
+      - ./source-appscript:/app/source-appscript:ro
       - ./frontend:/app/frontend:ro
       - ./data:/app/data:ro
       - ./source-appscript/schema.json:/app/schema.json:ro

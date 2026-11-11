@@ -14,9 +14,13 @@ from .db import engine, get_db
 from .models import User, LoginSession, ImportRun
 from .auth import check_password, token_hash, current_user, profile
 from .orders import router
+from .legacy_api import router as legacy_router, legacy_page
+from .google_oauth import router as google_router
 
-app = FastAPI(title='Napaco ERP Local', version='0.1.0', docs_url='/api/docs', redoc_url=None)
+app = FastAPI(title='Napaco ERP Local', version='0.2.0', docs_url='/api/docs', redoc_url=None)
 app.include_router(router)
+app.include_router(legacy_router)
+app.include_router(google_router)
 frontend = Path('/app/frontend')
 app.mount('/static', StaticFiles(directory=frontend), name='static')
 attempts = defaultdict(deque)
@@ -33,7 +37,7 @@ async def local_boundary(request: Request, call_next):
             return JSONResponse({'detail': 'Nguồn yêu cầu không hợp lệ.'}, status_code=403)
         if request.headers.get('sec-fetch-site') == 'cross-site':
             return JSONResponse({'detail': 'Nguồn yêu cầu không hợp lệ.'}, status_code=403)
-        if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 2_000_000:
+        if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 23_000_000:
             return JSONResponse({'detail': 'Yêu cầu quá lớn.'}, status_code=413)
     start = time.perf_counter()
     response = await call_next(request)
@@ -54,8 +58,13 @@ async def database_error(request, exc):
 
 
 @app.get('/')
-def index():
-    return FileResponse(frontend / 'index.html')
+def index(request:Request,db=Depends(get_db)):
+    return legacy_page(request,db)
+
+
+@app.get('/login')
+def login_page():
+    return FileResponse(frontend / 'login.html')
 
 
 @app.get('/api/health')

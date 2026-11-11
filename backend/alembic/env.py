@@ -1,6 +1,7 @@
 from alembic import context
 from app.db import engine, Base
 from app import models
+from app import film_models, google_models
 
 with engine.connect() as connection:
     context.configure(connection=connection, target_metadata=Base.metadata, compare_type=True)

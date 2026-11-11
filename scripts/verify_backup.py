@@ -33,7 +33,7 @@ def verify():
         mysql(('CREATE DATABASE `' + database + '` CHARACTER SET utf8mb4;').encode())
         created = True
         mysql(gzip.decompress(source.read_bytes()), database)
-        tables = ['customers', 'products', 'users', 'orders', 'order_lines', 'role_permissions', 'source_rows']
+        tables = [x for x in mysql(b'SHOW TABLES;', database).splitlines() if x != 'alembic_version']
         counts = {table: int(mysql(('SELECT COUNT(*) FROM `' + table + '`;').encode(), database)) for table in tables}
         totals = mysql(b'SELECT SUM(quantity), SUM(delivered), SUM(quantity * price) FROM order_lines;', database)
         result = {'backup': source.name, 'checksum': 'PASS', 'restore': 'PASS', 'counts': counts, 'totals': totals,

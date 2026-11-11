@@ -58,8 +58,17 @@ if __name__ == '__main__':
     action = sys.argv[1] if len(sys.argv) > 1 else 'status'
     if action == 'start':
         ready()
+        from configure_google import configure
+        configure(required=False)
         compose('up', '-d', 'mysql')
+        for attempt in range(60):
+            health=subprocess.run([DOCKER,'inspect','--format','{{.State.Health.Status}}','napaco-mysql84'],capture_output=True,text=True)
+            if health.returncode==0 and health.stdout.strip()=='healthy':break
+            if attempt%10==0:print('Đang chờ MySQL sẵn sàng…',flush=True)
+            time.sleep(1)
+        else:raise RuntimeError('MySQL chưa sẵn sàng; kiểm tra Docker Desktop.')
         compose('run', '--rm', '--no-deps', 'backend', 'alembic', 'upgrade', 'head')
+        compose('run', '--rm', '--no-deps', 'backend', 'python', '-m', 'app.legacy_store')
         compose('up', '-d', 'backend')
         import urllib.request
         for _ in range(30):

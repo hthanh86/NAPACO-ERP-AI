@@ -11,3 +11,5 @@ reports/*private*
 reports/
 .DS_Store
 .pytest_cache/
+
+.google.env

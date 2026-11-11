@@ -1,9 +1,10 @@
-# NAPACO ERP Local
+# NAPACO ERP Local — giao diện gốc
 
-Mở `Mo ung dung.command`, sau đó vào http://127.0.0.1:8000.
+Mở `Mo ung dung.command`, vào http://127.0.0.1:8000/?view=index.
 
-Tài khoản website trong `.local-admin.txt`. Không dùng tài khoản MySQL để đăng nhập website.
+Menu và các màn hình Web App gốc được giữ lại: nhiều PO, Định Hình/Bế, PO Header, Line-Item, Kanban, sửa hàng loạt, đặt màng, nhận màng, tồn và nhận trả.
 
-Đọc [hướng dẫn chi tiết](Huong%20dan%20chay%20va%20chuyen%20doi%20local.md) để sử dụng, nhập dữ liệu, sao lưu và kiểm tra.
+- [Hướng dẫn test đầy đủ](Huong%20dan%20test%20toan%20bo%20giao%20dien%20goc.md)
+- [Kết nối Google/Drive](Huong%20dan%20ket%20noi%20Google%20va%20Drive.md)
 
-Bản đầu đã chạy luồng Đơn hàng trên FastAPI + MySQL 8.4. Dữ liệu local không tự đồng bộ với Sheets. Các module khác đang chờ chuyển đổi; danh mục nguồn có liên kết thiếu, đã được giữ nguyên mã và ghi rõ trong báo cáo.
+Tài khoản local ở `.local-admin.txt`. Đăng nhập Google và file Drive cần client JSON riêng và người dùng cấp quyền. Dữ liệu local không đồng bộ về Google Sheets. Mục Nhật Ký Định Hình vẫn Chờ liên kết như source cũ.
