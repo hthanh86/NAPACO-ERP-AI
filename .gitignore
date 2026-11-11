@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+setup/01-local-database.sql
+.mysql.env
+data/
+backups/
+.local-admin.txt
+reports/*private*
+reports/
+.DS_Store
+.pytest_cache/

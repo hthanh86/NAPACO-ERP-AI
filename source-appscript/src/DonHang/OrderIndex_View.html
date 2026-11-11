@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>NAPACO ERP - Đơn Hàng</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { color: #14223b; font: 15px system-ui, sans-serif; }
+    .erp-index { min-width: 0; width: 100%; max-width: 1200px; margin: 0 auto; padding: clamp(18px, 4vw, 48px); }
+    .erp-index-hero { padding: clamp(22px, 4vw, 44px); border-radius: 16px; background: linear-gradient(115deg, #152543, #214a8d); color: #fff; }
+    .erp-index-eyebrow { color: #c6dbff; font-size: 11px; font-weight: 750; letter-spacing: .12em; }
+    .erp-index h1 { margin: 9px 0; font-size: clamp(29px, 4vw, 42px); }
+    .erp-index-hero p { max-width: 47ch; margin: 0; color: #e0ebff; line-height: 1.5; }
+    .erp-index h2 { margin: 26px 0 12px; font-size: 18px; }
+    .erp-index-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .erp-index-card { display: grid; gap: 10px; padding: 21px; border: 1px solid #dbe4f0; border-radius: 12px;
+      background: #fff; color: #14223b; text-decoration: none; box-shadow: 0 2px 5px #14223b08; }
+    .erp-index-card:hover, .erp-index-card:focus-visible { border-color: #2f67c5; outline: 2px solid #c4d9fb; }
+    .erp-index-card strong { font-size: 20px; }
+    .erp-index-card small { color: #526781; }
+    .erp-index-tag { width: fit-content; padding: 4px 8px; border-radius: 5px; background: #e9f1fd; color: #214e9b; font-size: 10px; font-weight: 750; }
+    .erp-index-open { color: #215bb6; font-weight: 700; }
+    @media (max-width: 620px) { .erp-index-cards { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body class="erp-shell">
+  <?!= renderOrderMenu_(appUrl, 'index') ?>
+  <main class="erp-index">
+    <header class="erp-index-hero">
+      <div class="erp-index-eyebrow">QUẢN LÝ SẢN XUẤT</div>
+      <h1>Đơn hàng</h1>
+      <p>Tra cứu và điều phối đơn hàng theo từng công đoạn sản xuất.</p>
+    </header>
+    <p><a class="erp-index-open" href="<?= appUrl ?>?view=create">+ Tạo đơn hàng</a></p>
+    <h2>Đơn hàng theo công đoạn</h2>
+    <nav class="erp-index-cards" aria-label="Đơn hàng theo công đoạn">
+      <a class="erp-index-card" href="<?= appUrl ?>?view=list">
+        <span class="erp-index-tag">TYPE 1</span>
+        <strong>Định Hình</strong>
+        <small>PO Header, Line-Item và Kanban</small>
+        <span class="erp-index-open">Mở danh sách →</span>
+      </a>
+      <a class="erp-index-card" href="<?= appUrl ?>?view=be">
+        <span class="erp-index-tag">TYPE 2</span>
+        <strong>Bế</strong>
+        <small>Line-Item và Kanban</small>
+        <span class="erp-index-open">Mở danh sách →</span>
+      </a>
+    </nav>
+  </main>
+</body>
+</html>

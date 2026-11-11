@@ -1,0 +1,44 @@
+name: napaco-local
+services:
+  mysql:
+    image: mysql@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+    container_name: napaco-mysql84
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?}
+      MYSQL_USER: ${MYSQL_USER:?}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes:
+      - mysql84_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+  backend:
+    build: ./backend
+    container_name: napaco-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: ${MYSQL_DATABASE:?}
+      DB_USER: ${MYSQL_USER:?}
+      DB_PASSWORD: ${MYSQL_PASSWORD:?}
+    volumes:
+      - ./frontend:/app/frontend:ro
+      - ./data:/app/data:ro
+      - ./source-appscript/schema.json:/app/schema.json:ro
+      - ./reports:/app/reports
+volumes:
+  mysql84_data:
