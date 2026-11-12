@@ -18,7 +18,7 @@
     const item = el('a', '', 'erp-module-link'); item.href = href;
     const mark = el('span', icon, 'erp-module-icon'); mark.setAttribute('aria-hidden', 'true');
     item.append(mark, el('span', label));
-    const current = location.pathname === '/users' || location.pathname.startsWith('/master/')
+    const current = location.pathname === '/users' || location.pathname.startsWith('/master/') || location.pathname.startsWith('/qc/')
       ? location.pathname : '/?view=' + (new URLSearchParams(location.search).get('view') || 'index');
     if (href === current) item.setAttribute('aria-current', 'page');
     return item;
@@ -57,6 +57,17 @@
     try {
       const user = await window.NAPACO_IDENTITY;
       window.NAPACO_USER = user;
+      const qcLinks = [];
+      if (user.permissions.includes('QC_CREATE')) qcLinks.push(['Tạo Phiếu QC','/qc/create','+']);
+      if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Tạo Phiếu NCR/CAPA','/qc/ncr','◇']);
+      if (user.permissions.includes('QC_VIEW')) qcLinks.push(['Danh sách QC','/qc/list','▤']);
+      if (qcLinks.length) {
+        const qc = el('details', '', 'erp-submenu'); qc.id = 'erpQcMenu'; qc.open = location.pathname.startsWith('/qc/');
+        const summary = el('summary', '', 'erp-module-link erp-submenu-toggle');
+        summary.append(el('span','✓','erp-module-icon'), el('span','QC'), el('span','','erp-submenu-chevron'));
+        const children = el('div','','erp-submenu-links'); qcLinks.forEach(entry => children.append(link(...entry)));
+        qc.append(summary, children); (nav || sidebar).append(qc);
+      }
       if (user.permissions.includes('USER_MANAGE')) {
         master.insertBefore(link('User', '/users', '⚙'), master.children[1]);
       }

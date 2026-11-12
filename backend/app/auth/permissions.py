@@ -13,5 +13,7 @@ PERMISSION_LABELS = {
     'FILM_PO_CANCEL': 'Hủy đơn nguyên liệu', 'NVL_RECEIVE': 'Nhận nguyên liệu',
     'NVL_STOCK_VIEW': 'Xem tồn kho', 'PRODUCTION_EDIT': 'Cập nhật sản xuất',
     'USER_MANAGE': 'Quản lý user', **MASTER_PERMISSIONS,
+    'QC_VIEW': 'Xem danh sách và chi tiết QC',
+    'QC_CREATE': 'Tạo phiếu QC', 'QC_EDIT': 'Sửa phiếu QC',
 }
 PERMISSION_CODES = set(LEGACY_CONFIG['PERMISSIONS'].values()) | set(PERMISSION_LABELS)

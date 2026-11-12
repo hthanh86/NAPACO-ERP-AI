@@ -12,3 +12,5 @@ import app.modules.materials.purchasing.models
 import app.modules.materials.receiving.models
 import app.modules.orders.models
 import app.modules.products.models
+import app.modules.production.models
+import app.modules.qc.models

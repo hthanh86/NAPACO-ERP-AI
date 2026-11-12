@@ -18,7 +18,7 @@ function filmReceiptAccess_(readOnly = false) {
 function filmReceiptTables_(operation, forSave = true) {
   const { FILM_PO: po, FILM_LINES: line, FILM_RECEIPTS: receipt } = CONFIG.COLUMNS;
   const names = CONFIG.SHEET_NAMES;
-  const orders = readSheetTable_(operation, [names.FILM_PO], [po.ID, po.STATUS, po.SUPPLIER]);
+  const orders = readSheetTable_(operation, [names.FILM_PO], [po.ID, po.STATUS, po.SUPPLIER], [po.DATE]);
   const lines = readSheetTable_(operation, [names.FILM_LINES],
     [line.ID, line.PO_ID, line.MATERIAL_ID, line.RESIN, line.QTY, line.STATUS]);
   const incoming = readSheetTable_(operation, [names.FILM_RECEIPTS],
@@ -60,6 +60,9 @@ function getFilmReceiptLines() {
         spec[material.COLOR], spec[material.ESD], size].filter(Boolean).join(' · ')
     });
   }
+  // The receiving view groups lines in response order: newest PO first.
+  lines.sort((a, b) => (orders.get(b.po)[po.DATE] || '').localeCompare(orders.get(a.po)[po.DATE] || '') ||
+    b.po.localeCompare(a.po));
   const namesByLine = filmNamesByLine_({ master, operation }, new Set(lines.map(line => line.id)));
   for (const line of lines) line.customerProducts = namesByLine.get(line.id) || [];
   return { lines, today: filmDate_(new Date()) };

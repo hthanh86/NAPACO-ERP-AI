@@ -9,6 +9,7 @@ from app.auth.admin import router as admin_router
 from app.modules.master.api import router as master_router
 from app.modules.orders.api import router as orders_router
 from app.modules.products.api import router as products_router
+from app.modules.qc.api import router as qc_router
 from app.integrations.google.oauth import router as google_router
 from app.compatibility.api import router as compatibility_router
 from app.system.api import router as system_router
@@ -18,7 +19,7 @@ from fastapi.openapi.utils import get_openapi
 
 app = FastAPI(title='Napaco ERP Local', version='0.2.0', docs_url=None, redoc_url=None,
               dependencies=[Depends(require_session)], openapi_url=None)
-for router in (orders_router, products_router, auth_router, admin_router, master_router, compatibility_router, google_router, system_router):
+for router in (orders_router, products_router, qc_router, auth_router, admin_router, master_router, compatibility_router, google_router, system_router):
     app.include_router(router)
 static = StaticFiles(directory=FRONTEND_ROOT)
 
