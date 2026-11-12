@@ -32,7 +32,10 @@ VIEWS={'index','create','modal','list','be','film','film-create','film-stock','f
 
 
 def inject(html,revision):
-    bridge='<script>window.NAPACO_REV='+str(revision)+';</script><script src="/static/shared/bridge.js"></script>'
+    bridge=('<script>window.NAPACO_REV='+str(revision)+';</script>'
+            '<script src="/static/shared/bridge.js?v=20261112-master-v2"></script>'
+            '<link rel="stylesheet" href="/static/shared/navigation.css?v=20261112-master-v2">'
+            '<script defer src="/static/shared/navigation.js?v=20261112-master-v2"></script>')
     # Preserve the exact source markup and CSS; replace only the Google RPC transport
     # and vendor the original pinned drag/drop library for offline local use.
     html=html.replace('<head>','<head>'+bridge,1)

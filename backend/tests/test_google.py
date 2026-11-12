@@ -22,7 +22,7 @@ def test_oauth_state_email_allowlist_and_encrypted_token_storage(clients,monkeyp
     client,_,conn=clients;setup_google(monkeypatch)
     assert client.get('/auth/google/callback?state=bad&code=bad').status_code==400
     conn.execute(User.__table__.update().where(User.id=='_TEST_READER').values(email='reader@example.test'))
-    response=client.get('/auth/google/start',follow_redirects=False)
+    response=client.get('/auth/google/start?next=%2F%3Fview%3Dfilm-stock',follow_redirects=False)
     assert response.status_code==303
     params=urllib.parse.parse_qs(urllib.parse.urlsplit(response.headers['location']).query)
     assert params['code_challenge_method']==['S256']
@@ -35,6 +35,11 @@ def test_oauth_state_email_allowlist_and_encrypted_token_storage(clients,monkeyp
     monkeypatch.setattr(google_oauth,'google_json',fake)
     result=client.get('/auth/google/callback?'+urllib.parse.urlencode({'state':state,'code':'test-code'}),follow_redirects=False)
     assert result.status_code==303,result.text
+    assert result.headers['location']=='/?view=film-stock'
+    session_cookie=next(cookie for cookie in result.headers.get_list('set-cookie') if cookie.startswith('napaco_session='))
+    assert 'SameSite=lax' in session_cookie
+    assert 'HttpOnly' in session_cookie
+    assert 'Path=/' in session_cookie
     assert client.get('/api/me').json()['id']=='_TEST_READER'
     encrypted=conn.execute(select(GoogleCredential.encrypted_access).where(GoogleCredential.user_id=='_TEST_READER')).scalar_one()
     assert 'secret-access-test' not in encrypted
@@ -44,13 +49,14 @@ def test_oauth_state_email_allowlist_and_encrypted_token_storage(clients,monkeyp
 
 def test_oauth_rejects_unlisted_employee(clients,monkeypatch):
     client,_,conn=clients;setup_google(monkeypatch)
+    before=conn.scalar(select(func.count()).select_from(GoogleCredential))
     response=client.get('/auth/google/start',follow_redirects=False)
     state=urllib.parse.parse_qs(urllib.parse.urlsplit(response.headers['location']).query)['state'][0]
     monkeypatch.setattr(google_oauth,'google_json',lambda url,**kw:{'access_token':'x','expires_in':3600} if url.endswith('/token') else
                         {'sub':'other','email':'not-an-employee@example.test','email_verified':True})
     result=client.get('/auth/google/callback?'+urllib.parse.urlencode({'state':state,'code':'test-code'}),follow_redirects=False)
     assert result.status_code==403
-    assert conn.scalar(select(func.count()).select_from(GoogleCredential))==0
+    assert conn.scalar(select(func.count()).select_from(GoogleCredential))==before
 
 
 def fake_credential(conn):

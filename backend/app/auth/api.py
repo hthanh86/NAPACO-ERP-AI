@@ -10,6 +10,7 @@ from app.core.paths import FRONTEND_ROOT
 from app.auth.models import User, LoginSession
 from app.auth.security import check_password, token_hash, current_user, profile
 from app.auth.schemas import Login
+from app.integrations.google.models import GoogleCredential
 
 router = APIRouter()
 attempts = defaultdict(deque)
@@ -55,4 +56,5 @@ def logout(request: Request, response: Response, db=Depends(get_db)):
 
 @router.get('/api/me')
 def me(user=Depends(current_user), db=Depends(get_db)):
-    return profile(db, user)
+    return {**profile(db, user), 'email': user.email,
+            'google_connected': db.get(GoogleCredential, user.id) is not None}

@@ -25,3 +25,4 @@
   }
   window.google={script:{get run(){return runner();},host:{close(){location.href='/?view=index';}}}};
 })();
+

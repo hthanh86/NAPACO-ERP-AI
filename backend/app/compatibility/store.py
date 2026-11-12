@@ -102,6 +102,8 @@ def source_cells(row,fallback):
 
 def project(db):
     raw=baseline(db)
+    from app.auth.legacy_adapter import permission_rows
+    raw['master'][NAMES['PERMISSIONS']] = permission_rows(db)
     for key,(model,group,mapping) in SPECS.items():
         name=NAMES[key]
         if name not in raw[group]:

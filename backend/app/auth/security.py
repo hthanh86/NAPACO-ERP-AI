@@ -45,7 +45,8 @@ def require(db, user, permission):
 
 
 def profile(db, user):
-    permissions = ['ORDER_CREATE', 'ORDER_EDIT'] if user.role == 'LOCAL_ADMIN' else list(
+    from app.auth.permissions import PERMISSION_CODES
+    permissions = sorted(PERMISSION_CODES) if user.role == 'LOCAL_ADMIN' else list(
         db.scalars(select(RolePermission.permission).where(RolePermission.role == user.role,
                                                         RolePermission.allowed.is_(True))))
     return {'id': user.id, 'name': user.name, 'role': user.role, 'permissions': permissions}

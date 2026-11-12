@@ -73,7 +73,7 @@ if __name__ == '__main__':
         import urllib.request
         for _ in range(30):
             try:
-                with urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2) as response:
+                with urllib.request.urlopen('http://127.0.0.1:8000/login', timeout=2) as response:
                     if response.status == 200: break
             except Exception:
                 time.sleep(1)

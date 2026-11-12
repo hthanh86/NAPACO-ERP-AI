@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.auth.models import User, LoginSession
 from app.integrations.google.models import GoogleCredential, GoogleOAuthState
 from app.auth.security import token_hash
+from app.auth.access import safe_next
 
 router=APIRouter()
 REDIRECT='http://127.0.0.1:8000/auth/google/callback'
@@ -66,6 +67,7 @@ def start(request:Request,db=Depends(get_db)):
             'code_challenge_method':'S256'}
     response=RedirectResponse('https://accounts.google.com/o/oauth2/v2/auth?'+urllib.parse.urlencode(params),status_code=303)
     response.set_cookie('napaco_oauth_state',state,httponly=True,samesite='lax',max_age=600,path='/auth/google')
+    response.set_cookie('napaco_oauth_next',safe_next(request.query_params.get('next')),httponly=True,samesite='lax',max_age=600,path='/auth/google')
     return response
 
 
@@ -97,9 +99,13 @@ def callback(request:Request,db=Depends(get_db)):
     session=secrets.token_urlsafe(40)
     db.add(LoginSession(token_hash=token_hash(session),user_id=user.id,expires_at=datetime.utcnow()+timedelta(hours=8)))
     db.delete(pending);db.commit()
-    response=RedirectResponse('/?view=index',status_code=303)
+    response=RedirectResponse(safe_next(request.cookies.get('napaco_oauth_next') or '/?view=index'),status_code=303)
     response.delete_cookie('napaco_oauth_state',path='/auth/google')
-    response.set_cookie('napaco_session',session,httponly=True,samesite='strict',max_age=8*3600)
+    response.delete_cookie('napaco_oauth_next',path='/auth/google')
+    # Google returns through a cross-site top-level redirect. Strict would omit
+    # the new cookie on the following navigation to the protected ERP page.
+    # Lax permits this GET; core.http still rejects cross-origin writes.
+    response.set_cookie('napaco_session',session,httponly=True,samesite='lax',max_age=8*3600)
     return response
 
 
