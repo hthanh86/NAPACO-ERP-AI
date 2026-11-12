@@ -30,14 +30,36 @@ class QCInput(BaseModel):
     object_type: ObjectType
     object_id: str = Field(min_length=1, max_length=100)
     checked_at: datetime
-    quantity: Decimal = Field(ge=0, max_digits=24, decimal_places=8, allow_inf_nan=False)
+    quantity: Decimal = Field(gt=0, max_digits=24, decimal_places=8, allow_inf_nan=False)
     result: str = Field(min_length=1, max_length=500)
     standard_url: str = Field(default='', max_length=10000)
     note: str = Field(default='', max_length=20000)
     image_url: str = Field(default='', max_length=10000)
     version: str | None = Field(default=None, min_length=64, max_length=64)
 
+    @field_validator('quantity')
+    @classmethod
+    def whole_quantity(cls, value):
+        if value != value.to_integral_value():
+            raise ValueError('Số lượng kiểm tra phải là số nguyên dương.')
+        return value
+
     @field_validator('standard_url', 'image_url')
     @classmethod
     def valid_url(cls, value):
         return document_url(value)
+
+
+class QCBatchInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    items: list[QCInput] = Field(min_length=1, max_length=10)
+
+    @field_validator('items')
+    @classmethod
+    def unique_iqc_receipts(cls, values):
+        if any(item.check_type != 'QC NVL' or item.object_type != 'NVL' for item in values):
+            raise ValueError('Tạo hàng loạt chỉ dùng cho IQC NVL.')
+        ids = [item.object_id.casefold() for item in values]
+        if len(set(ids)) != len(ids):
+            raise ValueError('Một phiếu nhập NVL chỉ được xuất hiện một lần trong lô QC.')
+        return values

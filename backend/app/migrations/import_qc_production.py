@@ -96,6 +96,8 @@ def prepare(path):
             # Correct the EB header in the new table, leaving the source immutable.
             if model is EBLog and 'EB_ID' not in headers and 'CUT_ID' in headers:
                 headers[headers.index('CUT_ID')] = 'EB_ID'
+            if model is QualityCheck and 'evidence' not in headers and 'Hinh_Anh' in headers:
+                headers[headers.index('Hinh_Anh')] = 'evidence'
             fields = {c.name: c for c in model.__table__.columns if c.key != 'source'}
             required = set(fields) - ({'OBJECT_TYPE'} if model is QualityCheck else set())
             if not required.issubset(headers) or set(headers) - set(fields):

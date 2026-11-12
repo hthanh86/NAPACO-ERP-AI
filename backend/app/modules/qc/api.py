@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import select, func, or_
 from app.auth.security import current_user, require
+from app.auth.models import User
 from app.core.database import get_db
 from app.core.paths import FRONTEND_ROOT
 from app.integrations.google import drive
-from app.modules.qc.schemas import QCInput, CheckType, ObjectType
+from app.modules.qc.schemas import QCInput, QCBatchInput, CheckType, ObjectType
 from app.modules.qc.models import QualityCheck
 from app.modules.qc import service
 
@@ -41,6 +42,10 @@ def objects(check_type: CheckType, object_type: ObjectType, q: str = Query('', m
             user=Depends(current_user), db=Depends(get_db)):
     allowed(db, user, 'QC_VIEW', 'QC_CREATE', 'QC_EDIT')
     service.valid_combination(check_type, object_type)
+    if object_type == 'NVL':
+        from app.modules.qc.materials import objects as material_objects
+        items, has_more = material_objects(q, page, size, db)
+        return {'items':[service.object_record(item) for item in items], 'has_more':has_more, 'page':page}
     if not q.strip():
         return {'items': [], 'has_more': False, 'page': page}
     model = service.MODELS[object_type]
@@ -89,10 +94,13 @@ def listing(q: str = Query('', max_length=100), check_type: CheckType | None = N
     # Omit long notes, images and source JSON from the paginated list.
     fields = ['id', 'checked_at', 'check_type', 'object_type', 'object_id', 'production_order_id',
               'quantity', 'result', 'staff_id', 'standard_url']
-    rows = db.execute(select(*[getattr(QualityCheck, key) for key in fields]).where(*conditions)
+    rows = db.execute(select(*[getattr(QualityCheck, key) for key in fields],
+                             User.name.label('staff_name'), QualityCheck.image_url.label('evidence'))
+                      .outerjoin(User, User.id == QualityCheck.staff_id).where(*conditions)
                       .order_by(QualityCheck.checked_at.desc(), QualityCheck.id.desc()).offset((page-1)*size).limit(size)).mappings().all()
     items = [dict(row) for row in rows]
     for item in items:
+        item['staff_name'] = item['staff_name'] or 'Chưa xác định'
         if item['quantity'] is not None:
             item['quantity'] = format(item['quantity'], '.8f')
     return {'items': items, 'total': total, 'page': page, 'size': size}
@@ -104,13 +112,19 @@ def detail(identifier: str, user=Depends(current_user), db=Depends(get_db)):
     obj = db.get(QualityCheck, identifier)
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
-    return service.record(obj)
+    return service.detail_record(db, obj)
 
 
 @router.post('/api/qc', status_code=201)
 def create(data: QCInput, idempotency_key: UUID = Header(), user=Depends(current_user), db=Depends(get_db)):
     require(db, user, 'QC_CREATE')
     return service.create(db, user, data, str(idempotency_key))
+
+
+@router.post('/api/qc/batch', status_code=201)
+def create_batch(data: QCBatchInput, idempotency_key: UUID = Header(), user=Depends(current_user), db=Depends(get_db)):
+    require(db, user, 'QC_CREATE')
+    return service.create_records(db, user, data.items, str(idempotency_key))
 
 
 @router.put('/api/qc/{identifier}')

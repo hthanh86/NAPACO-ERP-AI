@@ -1,6 +1,34 @@
 # Bàn giao QC và các bảng sản xuất liên quan
 
-## Trạng thái
+## Cập nhật IQC NVL — migration 005
+
+Đã áp dụng trên local, ngày 12/11/2026:
+
+- Tìm NVL chỉ trả phiếu nhập còn tồn, chưa có OBJECT_ID trong bảng QC và ngày nhập từ hôm nay trừ 14 ngày đến hết hôm nay (15 ngày lịch, theo giờ Việt Nam). Chỉ truy vấn khi nhấn tìm kiếm; cho phép để trống từ khóa để xem những phiếu phù hợp, phân trang server.
+- Hiển thị mã N_NVL, các tên sản phẩm được gắn qua đơn hàng, nhựa/quy cách và nhà cung cấp. Có thể tìm theo mã, sản phẩm, nhựa và nhà cung cấp. Tồn kho tính đúng quy tắc đang có: đã nhận − cấp + trả được xác nhận; trả chưa xác nhận không được cộng tồn.
+- **Tạo phiếu tiếp theo** đưa phiếu vào danh sách tạm rồi mở form trắng. **Tạo Phiếu** gửi toàn bộ danh sách cùng phiếu đang nhập trong một transaction, tối đa 10 phiếu. Nếu form hiện tại trống thì chỉ gửi các phiếu đã đưa vào danh sách tạm. Một phiếu nhập không được lặp trong lô. Phiếu tạm chưa được ghi MySQL; rời trang sẽ được nhắc nếu còn danh sách tạm.
+- Backend kiểm tra lại điều kiện NVL khi tạo, khóa các phiếu nhập theo thứ tự cố định để chống hai yêu cầu cùng IQC một phiếu nhập; dùng idempotency để retry không tạo lặp. Nếu một phiếu lỗi hoặc lỗi giữa lúc ghi thì rollback toàn bộ lô. Sửa QC đã có vẫn được phép khi NVL đã quá 15 ngày/hết tồn, miễn giữ nguyên đối tượng. Nếu đổi sang đối tượng khác, đối tượng mới phải đủ điều kiện.
+- Nhập/sửa số lượng kiểm tra yêu cầu **số nguyên dương**. Danh sách và form chi tiết hiển thị số nguyên; không sửa kiểu cột DECIMAL hoặc tự chuyển đổi dữ liệu lịch sử trong database.
+- Danh sách: từ ngày/đến ngày cùng hàng; tạm ẩn bộ lọc OBJECT_ID và mã OBJECT_ID trong cột đối tượng, giữ hỗ trợ trong API; người QC hiển thị tên user. Cột **Tiêu Chuẩn** dùng `Tieu_Chuan_STD`; cột **Bằng Chứng** dùng `evidence`.
+- [Migration 005](./backend/alembic/versions/005_qc_evidence.py) đổi tên cột `qc_checks.Hinh_Anh` thành `evidence`, không sao chép/xóa dữ liệu. Thuộc tính Python/API `image_url` giữ tương thích; API danh sách/chi tiết có thêm `evidence` và `staff_name`.
+- Form chi tiết có nút lưu/đóng ở cả đầu và cuối. Tìm đối tượng mặc định thu gọn, có thể mở để tìm và gán lại.
+- API mới: `POST /api/qc/batch`, body `{items: [...]}`, header UUID `Idempotency-Key`. Chỉ áp dụng cho IQC NVL; quyền vẫn là `QC_CREATE` hiện có.
+
+File chỉnh sửa: [service QC](./backend/app/modules/qc/service.py), [schema đầu vào](./backend/app/modules/qc/schemas.py), [API QC](./backend/app/modules/qc/api.py), [model QC](./backend/app/modules/qc/models.py), [bộ nhập nguồn](./backend/app/migrations/import_qc_production.py), [HTML](./frontend/qc/index.html), [JavaScript](./frontend/qc/qc.js), [CSS](./frontend/qc/qc.css), [test QC](./backend/tests/test_qc.py). File mới: [truy vấn NVL cho IQC](./backend/app/modules/qc/materials.py), [migration 005](./backend/alembic/versions/005_qc_evidence.py), [test IQC](./backend/tests/test_iqc.py).
+
+Kiểm tra thực tế:
+
+- **11 test QC và 3 test IQC đạt** trong MySQL local bằng fixture rollback. Bao gồm mốc 15 ngày, tồn/phiếu trả chưa xác nhận, tìm tên sản phẩm/NCC, phân trang, chống IQC trùng, số nguyên dương, lô 10 phiếu, từ chối 11 phiếu, quyền, idempotency và rollback cả sau khi phiếu đầu đã flush.
+- Kiểm tra cú pháp JavaScript đạt; kiểm tra lỗi VS Code không phát hiện lỗi ở các file đã kiểm tra.
+- Kiểm tra trình duyệt bằng đăng nhập local: tên/quy cách/NCC thực tế; ngày lọc cùng hàng; OBJECT_ID ẩn; tên người QC; link tiêu chuẩn/bằng chứng; form chi tiết thu gọn và đủ hai cặp nút lưu/đóng.
+- Kiểm tra danh sách tạm và gửi đúng lô 10 phiếu trên trình duyệt bằng API phản hồi giả lập; không ghi các phiếu thử đó vào database. Test backend tạo lô dùng MySQL thật nhưng rollback sau test.
+- Migration đối chiếu SHA-256 của cặp mã QC/liên kết bằng chứng trước và sau: khớp, giữ nguyên 1 phiếu thật. Sau kiểm thử vẫn chỉ có 1 QC, không còn user/QC/audit/request thử nghiệm.
+- Sao lưu trước migration: [napaco-before-iqc-005.sql](./reports/napaco-before-iqc-005.sql), quyền file 600, nằm trong thư mục được Git ignore. [Đối soát migration](./reports/iqc-migration-005.json), [đối soát sau test](./reports/iqc-validation-005.json).
+- Đã build lại image và nạp thay đổi backend local. Không thêm dependency, không tác động production. Chưa kiểm thử tải đồng thời nhiều kết nối hoặc Drive OAuth thật trong lần cập nhật này.
+
+## Nội dung bàn giao ban đầu — migration 004
+
+### Trạng thái ban đầu
 
 Đã áp dụng Alembic revision `004` trên MySQL **local**, sao lưu trước migration và nhập dữ liệu Excel có đối soát. Đã build lại image backend local và khởi động lại backend. Không đổi dependency hoặc cấu hình bí mật; không triển khai production.
 

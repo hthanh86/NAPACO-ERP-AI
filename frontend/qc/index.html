@@ -10,25 +10,26 @@
 <label>Mã phiếu QC<input name="q" maxlength="100" placeholder="QC_yymmdd_xx"></label>
 <label>Loại kiểm tra<select name="check_type"><option value="">Tất cả</option><option>QC NVL</option><option>QC ĐẦU CA</option><option>QC GIỮA CA</option><option>QC CUỐI CA</option></select></label>
 <label>Đối tượng<select name="object_type"><option value="">Tất cả</option><option>NVL</option><option>SETUP</option><option>HUT</option><option>CAT</option><option>EB</option></select></label>
-<label>OBJECT_ID<input name="object_id" maxlength="100"></label><label>LSX_ID<input name="production_order_id" maxlength="100"></label>
-<label>Từ ngày<input name="date_from" type="date"></label><label>Đến ngày<input name="date_to" type="date"></label>
+<label hidden>OBJECT_ID<input name="object_id" maxlength="100" disabled></label><label>LSX_ID<input name="production_order_id" maxlength="100"></label>
+<div class="date-range"><label>Từ ngày<input name="date_from" type="date"></label><label>Đến ngày<input name="date_to" type="date"></label></div>
 <div class="actions"><button type="submit">Tra cứu</button></div></form>
-<p id="summary">Chọn bộ lọc và nhấn Tra cứu để tải dữ liệu.</p><div class="table-wrap"><table><thead><tr><th>Mã QC</th><th>Ngày giờ</th><th>Loại kiểm tra</th><th>Đối tượng</th><th>LSX</th><th>Số lượng</th><th>Kết quả</th><th>Người QC</th><th>Hồ sơ</th><th>Thao tác</th></tr></thead><tbody id="rows"></tbody></table></div>
+<p id="summary">Chọn bộ lọc và nhấn Tra cứu để tải dữ liệu.</p><div class="table-wrap"><table><thead><tr><th>Mã QC</th><th>Ngày giờ</th><th>Loại kiểm tra</th><th>Đối tượng</th><th>LSX</th><th>Số lượng</th><th>Kết quả</th><th>Người QC</th><th>Tiêu Chuẩn</th><th>Bằng Chứng</th><th>Thao tác</th></tr></thead><tbody id="rows"></tbody></table></div>
 <div class="actions"><button type="button" id="previous" disabled>Trang trước</button><span id="pageInfo"></span><button type="button" id="next" disabled>Trang sau</button></div></section>
 <section id="editor" hidden><h2 id="editorHeading">Tạo Phiếu QC</h2><p>Mỗi phiếu gắn với một đối tượng. Kết quả NG không tự thay đổi dữ liệu kho hoặc sản xuất.</p>
-<form id="qcForm"><div class="grid">
+<div id="draftPanel" hidden><h3>Phiếu chờ tạo</h3><p id="draftSummary" role="status"></p><ol id="drafts"></ol></div>
+<form id="qcForm"><div id="topActions" class="actions" hidden><button id="saveTop" type="submit" formnovalidate>Lưu phiếu</button><button id="closeEditorTop" type="button">Đóng phiếu</button></div><div class="grid">
 <label>Loại kiểm tra<select id="checkType" name="check_type" required><option>QC NVL</option><option>QC ĐẦU CA</option><option>QC GIỮA CA</option><option>QC CUỐI CA</option></select></label>
 <label>Công đoạn / đối tượng<select id="objectType" name="object_type" required></select></label>
 <label>Ngày giờ kiểm tra<input id="checkedAt" name="checked_at" type="datetime-local" step="1" required></label>
-</div><fieldset id="objectPicker"><legend>Tìm bản ghi cần kiểm tra</legend><div class="search-line"><label>Mã đối tượng / LSX / máy<input id="objectSearch" maxlength="200" placeholder="Nhập từ khóa rồi nhấn Tìm đối tượng"></label><button type="button" id="findObjects">Tìm đối tượng</button></div>
-<label>Kết quả tìm kiếm<select id="objectResults" size="5" aria-describedby="objectHint"></select></label><p id="objectHint">Chưa tìm kiếm.</p><div class="actions"><button type="button" id="objectPrevious" disabled>Trước</button><button type="button" id="objectNext" disabled>Tiếp</button></div></fieldset>
+</div><details id="objectPicker" open><summary>Tìm bản ghi cần kiểm tra</summary><div class="search-line"><label><span id="objectSearchTitle">Mã đối tượng / LSX / máy</span><input id="objectSearch" maxlength="200" placeholder="Nhập từ khóa rồi nhấn Tìm đối tượng"></label><button type="button" id="findObjects">Tìm đối tượng</button></div>
+<label>Kết quả tìm kiếm<select id="objectResults" size="5" aria-describedby="objectHint"></select></label><p id="objectHint">Chưa tìm kiếm.</p><div class="actions"><button type="button" id="objectPrevious" disabled>Trước</button><button type="button" id="objectNext" disabled>Tiếp</button></div></details>
 <div class="grid"><label>OBJECT_ID đã chọn<input id="objectId" name="object_id" readonly required></label><label>LSX_ID liên quan<input id="lsx" readonly placeholder="Không có liên kết LSX"></label>
-<label>Số lượng kiểm tra<input id="quantity" name="quantity" type="number" min="0" step="0.00000001" required></label>
+<label>Số lượng kiểm tra<input id="quantity" name="quantity" type="number" min="1" step="1" required></label>
 <label>Kết quả kiểm tra<input id="result" name="result" list="resultOptions" maxlength="500" required placeholder="OK / NG hoặc kết quả nghiệp vụ"><datalist id="resultOptions"><option value="OK"><option value="NG"></datalist></label>
 <label>Người QC<input id="staff" readonly></label><label>NCR_ID hiện có<input id="ncr" readonly placeholder="Chưa liên kết"></label></div>
 <fieldset><legend>Tiêu chuẩn / hồ sơ kiểm tra</legend><label>URL tài liệu<input id="standardUrl" name="standard_url" type="url" maxlength="10000" placeholder="https://..."></label><a id="openStandard" target="_blank" rel="noopener noreferrer" hidden>Mở tài liệu</a>
 <div id="drivePicker"><div class="search-line"><label>Tìm trong Google Drive của bạn<input id="driveSearch" maxlength="200" placeholder="Tên file hoặc URL Google Drive"></label><button type="button" id="findDrive">Tìm file Drive</button></div><p id="driveStatus" role="status"></p><div id="driveResults"></div></div></fieldset>
-<label>Hình ảnh (URL)<input id="imageUrl" name="image_url" type="url" maxlength="10000"></label><a id="openImage" target="_blank" rel="noopener noreferrer" hidden>Mở hình ảnh</a>
+<label>Bằng chứng (URL)<input id="imageUrl" name="image_url" type="url" maxlength="10000"></label><a id="openImage" target="_blank" rel="noopener noreferrer" hidden>Mở bằng chứng</a>
 <label>Ghi chú / tình trạng NG / phương án xử lý<textarea id="note" name="note" rows="4" maxlength="20000"></textarea></label>
-<p id="formError" class="error" role="alert"></p><div class="actions"><button id="save" type="submit">Lưu phiếu QC</button><button id="newCheck" type="button" hidden>Tạo phiếu tiếp theo</button><button id="closeEditor" type="button" hidden>Đóng chi tiết</button></div></form></section>
+<p id="formError" class="error" role="alert"></p><div class="actions"><button id="newCheck" type="button">Tạo phiếu tiếp theo</button><button id="save" type="submit" formnovalidate>Tạo Phiếu</button><button id="closeEditor" type="button" hidden>Đóng phiếu</button></div></form></section>
 </main></body></html>
