@@ -13,6 +13,8 @@ from app.core.database import get_db
 from app.core.models import Audit
 from app.core.paths import FRONTEND_ROOT
 from app.compatibility.models import LegacyState
+from app.migrations.models import SourceRow
+from app.core.config import LEGACY_CONFIG
 from app.modules.customers.models import Customer
 from app.modules.products.models import Product
 from app.modules.materials.models import FilmSupplier
@@ -63,6 +65,25 @@ def record(values):
     return result
 
 
+def configured_values(db, key):
+    """Read a column from the imported 00.Config sheet without adding schema."""
+    rows = db.scalars(select(SourceRow).where(
+        SourceRow.book == 'master',
+        SourceRow.sheet == LEGACY_CONFIG['SHEET_NAMES']['SETTINGS']
+    ).order_by(SourceRow.row_number)).all()
+    if not rows:
+        return []
+    headers = [str(value or '').strip() for value in rows[0].cells]
+    try:
+        position = headers.index(key)
+    except ValueError:
+        return []
+    return list(dict.fromkeys(
+        str(row.cells[position]).strip() for row in rows[1:]
+        if position < len(row.cells) and str(row.cells[position]).strip()
+    ))
+
+
 @router.get('/master/{kind}')
 def page(kind: Kind, user=Depends(current_user)):
     return FileResponse(FRONTEND_ROOT / 'master/catalog.html')
@@ -75,17 +96,38 @@ def listing(kind: Kind, q: str = Query('', max_length=200), customer_id: str = Q
     model, fields, permission, _ = CATALOGS[kind]
     columns = [getattr(model, key) for key in fields]
     statement = select(*columns)
+    if kind == 'products':
+        statement = statement.add_columns(Customer.name.label('customer_name')).outerjoin(
+            Customer, Product.customer_id == Customer.id)
     if q.strip():
-        searchable = [model.id, model.name] + ([Product.code] if kind == 'products' else [])
+        searchable = [model.id, model.name] + ([Product.code, Customer.name] if kind == 'products' else [])
         statement = statement.where(or_(*[column.contains(q.strip(), autoescape=True) for column in searchable]))
     if kind == 'products' and customer_id:
         statement = statement.where(Product.customer_id == customer_id)
     total = db.scalar(select(func.count()).select_from(statement.subquery()))
-    items = [record(row) for row in db.execute(statement.order_by(model.id).offset((page-1)*size).limit(size)).mappings()]
+    items = []
+    for row in db.execute(statement.order_by(model.id).offset((page-1)*size).limit(size)).mappings():
+        item = record({key: row[key] for key in fields})
+        if kind == 'products':
+            item['customer_name'] = row['customer_name']
+        items.append(item)
+    options = {}
+    if kind == 'products' and page == 1:
+        options['customers'] = [
+            {'id': customer.id, 'name': customer.name}
+            for customer in db.execute(select(Customer.id, Customer.name).order_by(Customer.name, Customer.id))
+        ]
+        options['units'] = configured_values(db, LEGACY_CONFIG['COLUMNS']['SETTINGS']['UNITS']) or sorted({
+            str(value).strip() for value in db.scalars(select(Product.unit)).all() if str(value or '').strip()
+        } | {'Cái'})
+    if kind == 'suppliers' and page == 1:
+        options['categories'] = configured_values(db, 'Loại nhà cung cấp') or sorted({
+            str(value).strip() for value in db.scalars(select(FilmSupplier.category)).all() if str(value or '').strip()
+        })
     from app.auth.models import RolePermission
     grant = db.get(RolePermission, (user.role, permission)) if user.role != 'LOCAL_ADMIN' else None
     return {'items': items, 'total': total, 'page': page, 'size': size,
-            'can_manage': user.role == 'LOCAL_ADMIN' or bool(grant and grant.allowed)}
+            'can_manage': user.role == 'LOCAL_ADMIN' or bool(grant and grant.allowed), **options}
 
 
 @router.post('/api/master/{kind}', status_code=201)
