@@ -166,3 +166,11 @@ Các file bổ sung sửa trong đợt này: [jobs.py](backend/app/modules/qc/jo
 - [forms.js](./frontend/qc/forms.js): hiển thị số bằng chứng đã bỏ qua trong chi tiết đồng bộ.
 - 30 test backend completion/jobs đạt; test Node evidence selection đạt. Đã cập nhật backend/worker local và yêu cầu worker thử lại duy nhất QC_261113_08 để kiểm tra thực tế.
 - Kết quả thực tế: QC_261113_08 đã COMPLETED ở lần thử đầu sau cập nhật; worker đã khôi phục snapshot trên bản sao tạm, xuất/upload PDF và đối soát Drive thành công. Không tạo QC mới, không sửa template gốc.
+
+### Nội dung nhiều dòng không bị cắt khi xuất PDF (13/11/2026)
+
+- Nguyên nhân: browser preview tự giãn hàng theo nội dung nhưng Google Sheets giữ chiều cao hàng của template; ô gộp cũng không được tự giãn đúng khi xuất.
+- [sheets_layout.py](./backend/app/modules/qc/sheets_layout.py): đo độ rộng chữ theo font, cỡ chữ, chiều rộng cột/vùng gộp, số dòng thực tế (cả dòng trống) và padding. Bật WRAP, chỉ tăng chiều cao khi cần; ô gộp nhiều hàng tăng hàng cuối trong vùng. Giữ vùng chữ ký và không thu nhỏ hàng cũ. Dùng font DejaVu/ReportLab hiện có, không thêm dependency.
+- [sheets_pdf.py](./backend/app/modules/qc/sheets_pdf.py): gộp các yêu cầu định dạng/giãn hàng vào batch ghi dữ liệu trên bản sao tạm trước export. Không sửa template gốc, mapping hoặc dữ liệu phiếu.
+- [test_qc_sheet_layout.py](./backend/tests/test_qc_sheet_layout.py): ghi chú nhiều dòng, dòng trống, từ dài, vùng gộp dọc/ngang, không giảm chiều cao và giữ chữ ký. Tổng 32 test layout/completion/jobs đạt khi worker local được dừng để không tranh job test restart. Backend/worker local đã cập nhật.
+- Kiểm tra thực tế sau sửa: đã đồng bộ lại QC_261113_08 trên Drive, job COMPLETED. Tải PDF về QA tạm trên máy, render bằng Quick Look và xem trực tiếp: toàn bộ ghi chú nhiều dòng ở tiêu chí độ dày và ghi chú cuối phiếu hiện đầy đủ, không bị cắt; chữ ký/bảng vẫn gọn trong 1 trang A4. Kiểm tra thêm bằng pypdf đối chiếu nội dung với MySQL. File QA không được giữ trên server.

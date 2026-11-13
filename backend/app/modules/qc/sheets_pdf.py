@@ -112,6 +112,8 @@ def render(db,user,obj,token,progress=None):
     requests.append({'repeatCell':{'range':area,'cell':{'userEnteredValue':{'stringValue':''},
         'userEnteredFormat':{'backgroundColor':dict(zip(['red','green','blue'],marker))}},
         'fields':'userEnteredValue,userEnteredFormat.backgroundColor'}})
+    from app.modules.qc.sheets_layout import fit_content
+    requests.extend(fit_content(snap,layout,values,gid))
     if progress:progress('mapping')
     with measure('sheets.batch_mapping'):
         google_json(base+':batchUpdate',token=token,method='POST',body=json.dumps({'requests':requests}).encode(),headers={'Content-Type':'application/json'})
