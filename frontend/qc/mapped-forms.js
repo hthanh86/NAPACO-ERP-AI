@@ -11,17 +11,20 @@
     return body;
   }
   const params=()=>new URLSearchParams({check_type:$('checkType').value,object_type:$('objectType').value,object_id:$('objectId').value});
+  function controls(){
+    $('openMappedForm').disabled=!entry||loading;
+    $('findMappedTemplates').disabled=!!record||loading;
+    $('resignMapped').disabled=loading;
+  }
   function mode(){
     const active=!!entry;
     $('legacyFormSection').hidden=!legacyRecord;$('legacyEvidenceSection').hidden=false;
     $('useLegacyForm').hidden=true;
-    $('openMappedForm').disabled=!active||loading;
+    controls();
     $('result').readOnly=active;
     $('mappedSummary').textContent=active?(entry.code+' · v'+entry.version+(draft?' · '+draft.conclusion+' · '+(draft.confirmation||recordReadonly&&record?.form_data.signer?'Đã ký xác nhận':draft.signature?.length?'Giữ nét ký · xác nhận nội dung khi lưu':'Chưa có chữ ký'):' · Chưa nhập kết quả')):'Chọn đối tượng để xác định Google Sheets Template áp dụng.';
     $('mappedTemplate').disabled=true;
-    $('findMappedTemplates').disabled=!!record||loading;
     $('resignMapped').hidden=!record||!canEditRecord;
-    $('resignMapped').disabled=loading;
     $('mappedPdf').hidden=!record?.pdf_url;
     if(record?.pdf_url)$('mappedPdf').href=record.pdf_url;
   }
@@ -29,7 +32,7 @@
     if(record)return;
     if(entry){entry=draft=null;$('result').value='';legacy.reset();mode();}
     const current=++epoch;choices=[];$('mappedTemplate').replaceChildren(el('option','Chọn template đã duyệt'));$('mappedTemplate').options[0].value='';
-    if(!$('objectId').value){$('mappedSummary').textContent='Chọn đối tượng cần kiểm tra trước.';return;}
+    if(!$('objectId').value){loading=false;controls();$('mappedSummary').textContent='Chọn đối tượng cần kiểm tra trước.';return;}
     loading=true;mode();
     try{
       const data=await api('/api/qc/template-options?'+params());if(current!==epoch)return;
@@ -40,7 +43,7 @@
         if(current!==epoch)return;entry=data;$('mappedTemplate').value=data.id;mode();
       }else $('mappedSummary').textContent='Chưa xác định được một template duy nhất. Không thể tạo QC.';
     }catch(error){if(current===epoch)$('mappedSummary').textContent=error.message;}
-    finally{if(current===epoch){loading=false;$('findMappedTemplates').disabled=false;}}
+    finally{if(current===epoch){loading=false;controls();}}
   }
   function automatic(){
     if(record)return record.form_data.auto_values;
