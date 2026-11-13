@@ -7,7 +7,7 @@
     for (let n = index + 1; n; n = Math.floor((n - 1) / 26)) label = String.fromCharCode(65 + (n - 1) % 26) + label;
     return label;
   }
-  function render(container, data) {
+  function render(container, data, options = {}) {
     const theme = Object.fromEntries((data.theme?.themeColors || []).map(item => [item.colorType, item.color?.rgbColor]));
     function color(rgb, style) {
       const value = style?.rgbColor || theme[style?.themeColor] || rgb;
@@ -33,8 +33,8 @@
     }
     const grid = data.grid || {}, rows = grid.rowData || [], rowStart = grid.startRow || 0, colStart = grid.startColumn || 0;
     const merges = (data.merges || []).filter(m => (m.startRowIndex || 0) < data.row_count && (m.startColumnIndex || 0) < data.column_count);
-    const rowCount = Math.min(data.row_count, Math.max(1, rowStart + rows.length, ...merges.map(m => m.endRowIndex)));
-    const colCount = Math.min(data.column_count, Math.max(1, ...rows.map(r => colStart + (r.values || []).length), ...merges.map(m => m.endColumnIndex)));
+    const rowCount = Math.min(data.row_count, options.selectable ? data.row_count : Math.max(1, rowStart + rows.length, ...merges.map(m => m.endRowIndex)));
+    const colCount = Math.min(data.column_count, options.selectable ? data.column_count : Math.max(1, ...rows.map(r => colStart + (r.values || []).length), ...merges.map(m => m.endColumnIndex)));
     const covered = new Set(), anchors = new Map();
     for (const m of merges) {
       const r0 = m.startRowIndex || 0, c0 = m.startColumnIndex || 0;
@@ -60,9 +60,16 @@
       for(let c=0;c<colCount;c++) {
         const key=r+':'+c; if(covered.has(key)) continue;
         const value=rows[r-rowStart]?.values?.[c-colStart] || {}, cell=el('td');
+        const cellAddress = letters(c) + (r+1); cell.dataset.cell=cellAddress;
         const content=el('div',value.formattedValue ?? ''); cell.append(content);
         const merge=anchors.get(key); if(merge) {cell.rowSpan=merge.rows;cell.colSpan=merge.cols;}
-        format(cell,value); tr.append(cell);
+        format(cell,value);
+        if (options.onSelect) {
+          cell.tabIndex=0; cell.setAttribute('aria-label','Ô '+cellAddress);
+          cell.onclick=()=>options.onSelect(cellAddress);
+          cell.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();options.onSelect(cellAddress);}};
+        }
+        tr.append(cell);
       }
       body.append(tr);
     }

@@ -55,6 +55,23 @@ def document_url(value):
     return value
 
 
+class MappedAnswer(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    id: str = Field(min_length=1, max_length=64)
+    actual: str = Field(default='', max_length=2000)
+    assessment: Literal['PASS','FAIL','NA'] | None = None
+    note: str = Field(default='', max_length=2000)
+
+
+class MappedFormInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    template_id: str = Field(min_length=1, max_length=36)
+    source_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
+    mapping_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
+    answers: list[MappedAnswer] = Field(min_length=1, max_length=200)
+    conclusion: Literal['PASS','FAIL']
+
+
 class QCInput(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     check_type: CheckType
@@ -68,6 +85,7 @@ class QCInput(BaseModel):
     image_url: str = Field(default='', max_length=10000)
     version: str | None = Field(default=None, min_length=64, max_length=64)
     form: FormInput | None = None
+    mapped_form: MappedFormInput | None = None
     parent_folder_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,255}$')
 
     @field_validator('quantity')

@@ -91,6 +91,8 @@ def writable_record(db, user, identifier):
     obj = db.get(QualityCheck, identifier)
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
+    if obj.template_id:
+        raise HTTPException(422, 'Bước 2 chưa hỗ trợ PDF, thư mục hoặc upload cho template mapping.')
     if obj.staff_id != user.id:
         require(db, user, 'QC_EDIT')
     return obj
@@ -106,7 +108,7 @@ def prepare_bundle(identifier: str, user=Depends(current_user), db=Depends(get_d
 def download_pdf(identifier: str, user=Depends(current_user), db=Depends(get_db)):
     require(db, user, 'QC_VIEW')
     obj = db.get(QualityCheck, identifier)
-    if obj is None or not obj.form_data:
+    if obj is None or not obj.form_data or obj.template_id:
         raise HTTPException(404, 'Phiếu chưa có biểu mẫu ERP.')
     try:
         from app.modules.qc.pdf import render_pdf

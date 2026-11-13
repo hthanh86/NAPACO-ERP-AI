@@ -93,7 +93,7 @@ def first_tab(db, user, source, preview=False):
         letters = chr(65 + digit) + letters
     area = "'" + first['title'].replace("'", "''") + "'!A1:" + letters + str(rows)
     data = read_json(base + '?' + urllib.parse.urlencode({'ranges': area, 'fields':
-        'sheets(properties(sheetId),merges,data(startRow,startColumn,rowData(values(formattedValue,effectiveFormat)),rowMetadata(pixelSize,hiddenByUser,hiddenByFilter),columnMetadata(pixelSize,hiddenByUser)))'}), token)
+        'sheets(properties(sheetId),merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,effectiveFormat)),rowMetadata(pixelSize,hiddenByUser,hiddenByFilter),columnMetadata(pixelSize,hiddenByUser)))'}), token)
     sheet = next((item for item in data.get('sheets', [])
                   if item.get('properties', {}).get('sheetId', 0) == result['sheet_id']), {})
     result.update(grid=sheet.get('data', [{}])[0], merges=sheet.get('merges', []),

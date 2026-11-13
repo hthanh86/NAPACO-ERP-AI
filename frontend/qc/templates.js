@@ -6,7 +6,9 @@
   function message(text) {$('message').textContent = text;}
   async function api(url, options = {}) {
     const response = await fetch(url, {cache:'no-store', ...options});
-    const body = await response.json();
+    let body;
+    try {body = await response.json();}
+    catch {throw Error('Không đọc được phản hồi máy chủ (HTTP ' + response.status + '). Vui lòng thử lại.');}
     if (response.status === 401) location.assign('/login?next=' + encodeURIComponent(location.pathname));
     if (!response.ok) throw Error(typeof body.detail === 'string' ? body.detail :
       (body.detail || []).map(item => item.msg).join('; ') || 'Không thực hiện được yêu cầu.');
@@ -20,7 +22,7 @@
     controls.forEach(node => {node.disabled = true;});
     message('Đang xử lý…');
     try {await action();} catch (error) {message(error.message);}
-    finally {controls.forEach((node, index) => {node.disabled = disabled[index];}); busy = false; pagination();}
+    finally {controls.forEach((node, index) => {node.disabled = disabled[index];}); busy = false; pagination(); syncLock(); window.dispatchEvent(new Event('qc-template-work-finished'));}
   }
   let hasMore = false;
   function pagination() {$('previous').disabled = busy || page <= 1; $('next').disabled = busy || !hasMore;}
@@ -35,7 +37,12 @@
     $('editorTitle').textContent = row ? 'Sửa template ' + row.form_code : 'Thêm template mới';
     $('save').textContent = row ? 'Lưu thay đổi' : 'Đăng ký template';
     clearPreview(); message('');
+    syncLock(); window.dispatchEvent(new Event('qc-template-selected'));
     $('editor').scrollIntoView({behavior:'smooth'});
+  }
+  function syncLock() {
+    for(const node of form.querySelectorAll('input,select'))node.disabled=busy||!!selected?.approved_at;
+    $('save').disabled=busy||!!selected?.approved_at;
   }
   async function load(targetPage, keyword = query) {
     const data = await api('/api/qc/templates?' + new URLSearchParams({q:keyword,page:targetPage}));
@@ -56,7 +63,7 @@
   }
   function showPreview(data) {
     window.QCSheetPreview.render($('sheetPreview'), data);
-    $('previewInfo').textContent = data.title + ' · Tab đầu tiên: ' + data.sheet_title + ' · Google: ' + (data.google_email || '') +
+    $('previewInfo').textContent = data.title + ' · Tab đầu tiên: ' + data.sheet_title + (data.frozen_snapshot ? ' · Bản chụp đã phê duyệt' : ' · Google: ' + (data.google_email || '')) +
       (data.truncated ? ' · Giới hạn vùng A1, tối đa 500 hàng × 60 cột; có thể chưa hiển thị hết bảng.' : '');
     $('previewPanel').hidden = false;
   }
@@ -89,9 +96,22 @@
         {method:identifier?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});
       selected = row; $('editorTitle').textContent = 'Sửa template ' + row.form_code; $('save').textContent = 'Lưu thay đổi';
       await load(1, ''); $('query').value = '';
-      message('Đã lưu ' + row.form_code + ' ở trạng thái ' + row.status + '. Chưa áp dụng vào Tạo Phiếu QC.');
+      window.dispatchEvent(new Event('qc-template-selected'));
+      message('Đã đăng ký ' + row.form_code + ' ở trạng thái ' + row.status + '. Tải mapping từ Google Sheets rồi Lưu để phê duyệt và kích hoạt.');
     });
   };
+  window.QCTemplateAdmin = {api, work, message, selected:()=>selected, busy:()=>busy,
+    update(row){selected={...selected,...row};syncLock();},
+    refresh:()=>load(1,query),
+    newVersion(){
+      if(!selected)return;
+      const prior=selected;edit(null);
+      form.elements.form_code.value=prior.form_code.replace(/_V\d+$/, '')+'_V'+(prior.version+1);
+      form.elements.version.value=prior.version+1;form.elements.form_name.value=prior.form_name;
+      form.elements.check_type.value=prior.check_type;form.elements.object_type.value=prior.object_type||'';
+      form.elements.product_id.value=prior.product_id||'';
+      message('Nhập Spreadsheet ID riêng cho phiên bản mới. Mapping và phê duyệt sẽ được thực hiện lại.');
+    }};
   window.NAPACO_IDENTITY.then(user => {
     if (!user.permissions.includes('QC_TEMPLATE_MANAGE')) {
       document.querySelectorAll('main button,main input,main select').forEach(node => {node.disabled=true;});

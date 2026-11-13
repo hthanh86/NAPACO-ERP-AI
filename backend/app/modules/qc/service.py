@@ -79,7 +79,7 @@ def resolve_object(db, data, existing=None):
 
 
 FIELDS = ['id', 'checked_at', 'check_type', 'object_type', 'object_id', 'production_order_id',
-          'standard_url', 'quantity', 'result', 'staff_id', 'ncr_id', 'note', 'image_url', 'drive_folder_id', 'form_data']
+          'standard_url', 'quantity', 'result', 'staff_id', 'ncr_id', 'note', 'image_url', 'drive_folder_id', 'form_data', 'template_id']
 
 
 def record(obj):
@@ -101,7 +101,7 @@ def staff_name(db, identifier):
 def detail_record(db, obj):
     result = record(obj)
     result['staff_name'] = staff_name(db, obj.staff_id)
-    result['form_document_id'] = forms.document_id(obj.id) if obj.form_data else None
+    result['form_document_id'] = forms.document_id(obj.id) if obj.form_data and not obj.template_id else None
     result['evidence'] = ('https://drive.google.com/drive/folders/'+obj.drive_folder_id) if obj.drive_folder_id else obj.image_url
     task = (obj.source or {}).get(drive_bundle.JOB) if obj.form_data else (obj.source or {}).get(evidence.TASK)
     result['evidence_pending'] = bool(task and task.get('pending', True))
@@ -124,8 +124,8 @@ def finish_evidence(db, user, result, batch):
     return {'items': completed} if batch else completed[0]
 
 
-def apply_values(obj, data, identifier, lsx, user):
-    values = data.model_dump(exclude={'version', 'form', 'parent_folder_id'})
+def apply_values(db, obj, data, identifier, lsx, user):
+    values = data.model_dump(exclude={'version', 'form', 'mapped_form', 'parent_folder_id'})
     stamp = values['checked_at']
     values['checked_at'] = stamp.astimezone(TIMEZONE).replace(tzinfo=None) if stamp.tzinfo else stamp
     values['checked_at'] = values['checked_at'].replace(microsecond=0)
@@ -133,6 +133,12 @@ def apply_values(obj, data, identifier, lsx, user):
     values['production_order_id'] = lsx
     for key, value in values.items():
         setattr(obj, key, value)
+    if data.mapped_form:
+        from app.modules.qc.template_runtime import filled
+        obj.form_data = filled(db, user, data, obj.id, lsx)
+        obj.template_id = data.mapped_form.template_id
+        obj.standard_url = 'https://docs.google.com/spreadsheets/d/' + obj.form_data['template']['spreadsheet_id'] + '/edit'
+        return
     if data.form:
         saved_definition = (obj.form_data or {}).get('definition')
         if saved_definition and saved_definition['code'] == data.form.code:
@@ -162,8 +168,10 @@ def create(db, user, data, request_id):
 
 
 def create_records(db, user, items, request_id, batch=True):
-    contents = [item.model_dump(mode='json', exclude={'version'}) for item in items]
-    raw = json.dumps(contents, sort_keys=True) if batch else items[0].model_dump_json(exclude={'version'})
+    # Preserve existing legacy idempotency hashes when the optional new branch is absent.
+    excluded = lambda item: {'version'} | ({'mapped_form'} if item.mapped_form is None else set())
+    contents = [item.model_dump(mode='json', exclude=excluded(item)) for item in items]
+    raw = json.dumps(contents, sort_keys=True) if batch else items[0].model_dump_json(exclude=excluded(items[0]))
     digest = hashlib.sha256(raw.encode()).hexdigest()
     key = ('qcb:' if batch else 'qc:') + request_id
     # Reserve the shared request row atomically; concurrent retries wait for commit.
@@ -177,7 +185,9 @@ def create_records(db, user, items, request_id, batch=True):
         db.commit()
         return finish_evidence(db, user, result, batch)
     for data in items:
-        if data.check_type == 'QC NVL' and not data.form:
+        if data.mapped_form and (data.form or data.parent_folder_id or data.image_url):
+            raise HTTPException(422, 'Template mapping chỉ lưu MySQL; không gửi form ký, thư mục hoặc bằng chứng.')
+        if data.check_type == 'QC NVL' and not data.form and not data.mapped_form:
             raise HTTPException(422, 'Phiếu IQC mới cần biểu mẫu ERP đã nhập và ký.')
         if data.form:
             if not data.parent_folder_id:
@@ -205,10 +215,10 @@ def create_records(db, user, items, request_id, batch=True):
     for offset, data in enumerate(items, 1):
         identifier, lsx = resolved[(data.object_type, data.object_id)]
         obj = QualityCheck(id=prefix + str(highest+offset).zfill(2), staff_id=user.id, ncr_id='', source={})
-        apply_values(obj, data, identifier, lsx, user)
+        apply_values(db, obj, data, identifier, lsx, user)
         if data.form:
             drive_bundle.schedule(obj, user, data.parent_folder_id)
-        else:
+        elif not data.mapped_form:
             evidence.schedule(obj, user)
         db.add(obj)
         db.flush()
@@ -227,6 +237,8 @@ def update(db, user, identifier, data):
     obj = db.scalar(select(QualityCheck).where(QualityCheck.id == identifier).with_for_update())
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
+    if obj.template_id or data.mapped_form:
+        raise HTTPException(409, 'Hồ sơ template đã lưu được giữ nguyên bản chụp. Bước 2 chỉ hỗ trợ tạo và xem lại, không chuyển đổi hoặc ghi đè hồ sơ cũ.')
     if not data.version or data.version != record(obj)['version']:
         raise HTTPException(409, 'Phiếu đã thay đổi. Hãy mở lại trước khi sửa.')
     object_id, lsx = resolve_object(db, data, existing=obj)
@@ -234,7 +246,7 @@ def update(db, user, identifier, data):
         if not data.parent_folder_id:
             raise HTTPException(422, 'Hãy chọn thư mục cha cho hồ sơ QC.')
         drive_bundle.in_scope(db, drive_bundle.access_token(db, user), data.parent_folder_id, writable=True)
-    apply_values(obj, data, object_id, lsx, user)
+    apply_values(db, obj, data, object_id, lsx, user)
     if data.form:
         drive_bundle.schedule(obj, user, data.parent_folder_id)
     else:
