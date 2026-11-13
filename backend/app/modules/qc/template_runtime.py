@@ -214,4 +214,5 @@ def entry(identifier: str, check_type: CheckType, object_type: ObjectType, objec
     row = released(db, identifier, check_type, object_type, product_ids)
     return {'id':row.id,'code':row.form_code,'name':row.form_name,'version':row.version,
             'mapping':row.field_mapping,'snapshot':row.source_snapshot,'source_hash':row.source_hash,
-            'mapping_hash':mapping.digest(row.field_mapping),'context':values}
+            'mapping_hash':mapping.digest(row.field_mapping),'context':values,
+            'note_cells':mapping.criterion_notes(row.source_snapshot,row.field_mapping)}

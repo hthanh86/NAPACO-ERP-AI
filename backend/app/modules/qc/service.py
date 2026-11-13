@@ -111,7 +111,10 @@ def detail_record(db, obj):
     result['evidence_pending'] = bool(result['pdf_pending'] or remaining)
     result['evidence_error'] = task.get('error', 'Bằng chứng đang chờ xử lý trên Drive.') if task else ''
     result['evidence_step'] = (task or {}).get('step', '')
-    result['pdf_url'] = '/api/qc/' + obj.id + '/pdf' if task and task.get('pdf_revision') and not task.get('pending') else None
+    result['pdf_url'] = ('https://drive.google.com/file/d/'+task['pdf_id']+'/view') if task and task.get('pdf_id') and task.get('pdf_revision') and not task.get('pending') else None
+    if obj.template_id:
+        from app.modules.qc import mapping
+        result['criterion_note_cells']=mapping.criterion_notes(obj.form_data['template']['snapshot'],obj.form_data['template']['mapping'])
     from app.modules.qc.job_models import QCJob
     from app.modules.qc.jobs import job_record
     queued=db.scalar(select(QCJob).where(QCJob.qc_id==obj.id))

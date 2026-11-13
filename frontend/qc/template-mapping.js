@@ -3,24 +3,44 @@
   const el=(tag,text)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;return node;};
   let fields=[], snapshot=null, sourceHash=null, sources={}, pick=null, epoch=0, dirty=false,signatureLocked=false;
   const frozen=()=>!!admin.selected()?.approved_at;
+  function signatureMark(){
+    const start=$('signatureCell').value.trim().toUpperCase(),end=$('signatureEndCell').value.trim().toUpperCase()||start;
+    const area=snapshot&&window.QCSheetPreview.range(snapshot,start,end);
+    for(const cell of $('mappingPreview').querySelectorAll('[data-cell]')){
+      const box=window.QCSheetPreview.range(snapshot,cell.dataset.cell);
+      cell.classList.toggle('signature-range',!!(area&&box&&box.r0<area.r1&&box.r1>area.r0&&box.c0<area.c1&&box.c1>area.c0));
+    }
+    $('mappingPreview').classList.toggle('signature-picking',!!pick?.signature&&!signatureLocked);
+    if(!area){$('signatureRangeInfo').textContent=start?'Vùng chữ ký chưa hợp lệ.':'Chọn Ô đầu vùng chữ ký, rồi kéo trên preview để chọn toàn bộ vùng ký.';return;}
+    const grid=snapshot.grid||{};
+    let width=0,height=0;
+    for(let c=area.c0;c<area.c1;c++){const meta=grid.columnMetadata?.[c-(grid.startColumn||0)]||{};if(!meta.hiddenByUser)width+=meta.pixelSize||100;}
+    for(let r=area.r0;r<area.r1;r++){const meta=grid.rowMetadata?.[r-(grid.startRow||0)]||{};if(!meta.hiddenByUser&&!meta.hiddenByFilter)height+=meta.pixelSize||21;}
+    $('signatureRangeInfo').textContent='Vùng ký: '+area.start+':'+area.end+' · '+width+' × '+height+' px trên Sheets. '+
+      (width<87||height<38?'Vùng có thể quá nhỏ; hãy chọn rộng/cao hơn. ':'')+
+      (signatureLocked?'Đã phê duyệt; muốn thay đổi hãy tạo phiên bản mới.':'Vùng tô tím là phạm vi chữ ký và tên người ký. Kiểm tra trước khi phê duyệt. Tỉ lệ in có thể làm vùng nhỏ hơn trên PDF.');
+  }
   function mark(){
     const nodes=$('mappingPreview').querySelectorAll('[data-cell]');
     for(const cell of nodes){cell.classList.remove('map-ERP','map-STANDARD','map-INPUT');cell.removeAttribute('title');}
     const byCell=new Map([...nodes].map(node=>[node.dataset.cell,node]));
-    for(const field of fields)for(const key of ['cell','standard_cell','assessment_cell']){
+    for(const field of fields)for(const key of ['cell','standard_cell','assessment_cell','note_cell']){
       const node=byCell.get(field[key]);
       if(node){node.classList.add('map-'+(key==='standard_cell'?'STANDARD':field.kind));node.title=field.name+' · '+key;}
     }
+    signatureMark();
   }
   function selectedCell(cell){
     if(admin.busy()||!pick)return;
-    if(pick.signature){if(signatureLocked)return;$(pick.signature).value=cell;dirty=true;$('mappingPick').textContent='Đã chọn '+cell+' cho vùng chữ ký.';return;}
+    if(pick.signature){if(signatureLocked)return;$(pick.signature).value=cell;dirty=true;signatureMark();$('mappingPick').textContent='Đã chọn '+cell+' cho vùng chữ ký.';return;}
     if(frozen())return;
     fields[pick.index][pick.key]=cell;fields[pick.index].reviewed=false;dirty=true;renderFields();mark();
     $('mappingPick').textContent='Đã chọn '+cell+' cho '+fields[pick.index].name;
   }
   function renderPreview(){
-    if(snapshot)window.QCSheetPreview.render($('mappingPreview'),snapshot,{selectable:true,onSelect:selectedCell});
+    if(snapshot)window.QCSheetPreview.render($('mappingPreview'),snapshot,{selectable:true,onSelect:selectedCell,
+      canSelectRange:()=>!!pick?.signature&&!signatureLocked&&!admin.busy(),
+      onRangeSelect:(start,end)=>{if(signatureLocked||admin.busy())return;$('signatureCell').value=start;$('signatureEndCell').value=end;dirty=true;signatureMark();$('mappingPick').textContent='Đã chọn vùng chữ ký '+start+':'+end+'.';}});
     else $('mappingPreview').replaceChildren();
     mark();
   }
@@ -39,7 +59,7 @@
         for(const [value,label] of options){const option=el('option',label);option.value=value;node.append(option);}
         node.value=field[key]||'';node.onchange=()=>{
           field[key]=node.value;field.reviewed=false;dirty=true;
-          if(key==='kind') {field.source=null;field.standard_cell=null;field.assessment_cell=null;field.allow_na=false;}
+          if(key==='kind') {field.source=null;field.standard_cell=null;field.assessment_cell=null;field.note_cell=null;field.allow_na=false;}
           renderFields();mark();
         };return node;
       }
@@ -47,9 +67,9 @@
       const name=input('name'),identifier=input('id');name.readOnly=identifier.readOnly=true;td(name,identifier);
       const kind=select('kind',[['ERP','Tự điền MySQL'],['STANDARD','Tiêu chuẩn cố định'],['INPUT','Kết quả QC nhập']]);
       const source=select('source',[['','Chọn nguồn'],...Object.entries(sources)]);source.hidden=field.kind!=='ERP';td(kind,source);
-      for(const key of ['cell','standard_cell','assessment_cell']){
+      for(const key of ['cell','standard_cell','assessment_cell','note_cell']){
         const node=input(key);node.maxLength=5;node.placeholder='Chọn ô trên preview';
-        node.onfocus=()=>{pick={index,key};$('mappingPick').textContent='Đang chọn '+key+' cho '+field.name+' — nhấn ô trên preview.';};
+        node.onfocus=()=>{pick={index,key};signatureMark();$('mappingPick').textContent='Đang chọn '+key+' cho '+field.name+' — nhấn ô trên preview.';};
         node.hidden=key!=='cell'&&field.kind!=='INPUT';td(node);
       }
       td(select('data_type',[['text','Văn bản'],['number','Số'],['date','Ngày'],['boolean','Có / Không']]),input('unit'));
@@ -73,10 +93,10 @@
       admin.update(data);snapshot=data.snapshot;sourceHash=data.source_hash;sources=data.sources;
       fields=(data.mapping?.fields||[]).map(clean);renderFields();renderPreview();$('mappingWarnings').textContent='';
       $('signatureCell').value=data.mapping?.signature_cell||'';$('signatureEndCell').value=data.mapping?.signature_end_cell||'';
-      signatureLocked=!!data.mapping?.signature_cell;renderFields();
+      signatureLocked=!!data.mapping?.signature_cell;renderFields();signatureMark();
     }catch(error){admin.message(error.message);}
   }
-  function clean(field){return Object.fromEntries(['id','name','kind','cell','source','data_type','unit','required','allow_na','standard_cell','assessment_cell','reviewed'].map(key=>[key,field[key]??({unit:'',data_type:'text',required:true,allow_na:false,reviewed:false}[key]??null)]));}
+  function clean(field){return Object.fromEntries(['id','name','kind','cell','source','data_type','unit','required','allow_na','standard_cell','assessment_cell','note_cell','reviewed'].map(key=>[key,field[key]??({unit:'',data_type:'text',required:true,allow_na:false,reviewed:false}[key]??null)]));}
   async function refreshAfter(action){
     const row=admin.selected(),data=await admin.api('/api/qc/templates/'+encodeURIComponent(row.id)+'/'+action.path,
       {method:action.method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_updated_at:row.updated_at,...action.body})});
@@ -103,7 +123,7 @@
   $('deactivateTemplate').onclick=()=>release('status',{status:'INACTIVE'},'Đã ngừng kích hoạt. Hồ sơ cũ giữ nguyên.');
   $('verifyTemplate').onclick=()=>release('verify',{},'Nguồn Google vẫn khớp bản chụp đã lưu.');
   $('newVersion').onclick=()=>admin.newVersion();
-  for(const id of ['signatureCell','signatureEndCell']){$(id).onfocus=()=>{pick={signature:id};$('mappingPick').textContent='Nhấn ô trên preview để chọn vùng chữ ký.';};$(id).oninput=()=>{dirty=true;};}
+  for(const id of ['signatureCell','signatureEndCell']){$(id).onfocus=()=>{pick={signature:id};$('mappingPick').textContent='Kéo từ ô đầu đến ô cuối trên preview để chọn vùng chữ ký (tự chọn đủ ô gộp).';signatureMark();};$(id).oninput=()=>{dirty=true;signatureMark();};}
   $('approveSignatureLocation').onclick=()=>admin.work(async()=>{
     await refreshAfter({path:'signature-location',body:{cell:$('signatureCell').value.trim().toUpperCase(),end_cell:$('signatureEndCell').value.trim().toUpperCase()||null}});
     await load();admin.message('Đã phê duyệt bổ sung vị trí chữ ký; mapping dữ liệu được giữ nguyên.');

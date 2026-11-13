@@ -108,6 +108,7 @@ class MappingField(BaseModel):
     allow_na: bool = False
     standard_cell: str | None = Field(default=None, max_length=5)
     assessment_cell: str | None = Field(default=None, max_length=5)
+    note_cell: str | None = Field(default=None, max_length=5)
     reviewed: bool = False
 
 
@@ -129,7 +130,7 @@ def validate(data, mapping, check_type, approve=False):
         if field.id in identifiers:
             raise HTTPException(422, 'Mã trường mapping bị trùng: ' + field.id)
         identifiers.add(field.id)
-        for key in ('cell','standard_cell','assessment_cell'):
+        for key in ('cell','standard_cell','assessment_cell','note_cell'):
             if item[key]:
                 item[key] = anchor(data, item[key])
         if item['cell'] in occupied:
@@ -140,10 +141,13 @@ def validate(data, mapping, check_type, approve=False):
                 raise HTTPException(422, 'Nguồn MySQL không phù hợp: ' + str(field.source))
         elif field.source:
             raise HTTPException(422, 'Chỉ trường ERP mới được chọn nguồn MySQL.')
-        if field.kind != 'INPUT' and (field.allow_na or field.assessment_cell or field.standard_cell):
+        if field.kind != 'INPUT' and (field.allow_na or field.assessment_cell or field.standard_cell or field.note_cell):
             raise HTTPException(422, 'N/A, ô tiêu chuẩn và đánh giá chỉ dùng cho trường nhập kết quả.')
         if field.kind == 'INPUT':
             item['allow_na'] = True
+            if item['note_cell']:
+                if item['note_cell'] in occupied:raise HTTPException(422,'Ô ghi chú trùng vùng dữ liệu: '+item['note_cell'])
+                occupied.add(item['note_cell'])
             if item['assessment_cell']:
                 if item['assessment_cell'] in occupied:
                     raise HTTPException(422, 'Ô đánh giá trùng vùng ghi kết quả: ' + item['assessment_cell'])
@@ -161,7 +165,7 @@ def validate(data, mapping, check_type, approve=False):
         result.append(item)
     # A referenced standard must not be overwritten by any ERP/input target.
     mutable = {f['cell'] for f in result if f['kind'] != 'STANDARD'} | {
-        f['assessment_cell'] for f in result if f['assessment_cell']}
+        f['assessment_cell'] for f in result if f['assessment_cell']} | {f['note_cell'] for f in result if f['note_cell']}
     if any(f['standard_cell'] in mutable for f in result if f['standard_cell']):
         raise HTTPException(422, 'Ô tiêu chuẩn đang bị mapping kết quả hoặc ERP ghi đè.')
     if not any(field.kind == 'INPUT' for field in mapping.fields):
@@ -230,10 +234,11 @@ def suggest(data):
         if criterion is not None and actual is not None:
             header = (row, criterion, actual,
                 next((col for name,col in headings.items() if 'tieu chuan' in name),None),
-                next((col for name,col in headings.items() if name in {'danh gia','dat khong dat'}),None))
+                next((col for name,col in headings.items() if name in {'danh gia','dat khong dat'}),None),
+                next((col for name,col in headings.items() if name in {'ghi chu','dung sai ghi chu','ghi chu dung sai'}),None))
             break
     if header:
-        start, name_col, actual_col, standard_col, assessment_col = header
+        start, name_col, actual_col, standard_col, assessment_col, note_col = header
         for row in range(start+1,data['row_count']):
             name = text(data,address(row,name_col))
             # Numbered criteria are high signal; stop at a merged section/conclusion heading.
@@ -246,6 +251,7 @@ def suggest(data):
             unit = raw if raw in {'mm','cm','m','kg','g','Ω','Ω/sq','%'} else ''
             add('INPUT', address(row,actual_col), name, unit=unit, allow_na=True,
                 standard_cell=address(row,standard_col) if standard_col is not None else None,
+                note_cell=address(row,note_col) if note_col is not None else None,
                 assessment_cell=address(row,assessment_col) if assessment_col is not None else None)
             if standard_col is not None and text(data,address(row,standard_col)):
                 add('STANDARD',address(row,standard_col),'Tiêu chuẩn · ' + name)
@@ -254,3 +260,21 @@ def suggest(data):
     else:
         warnings.append('Không nhận diện chắc chắn bảng tiêu chí. Hãy chọn ô và thêm trường thủ công.')
     return {'fields':proposals, 'warnings':warnings + ['Đề xuất chưa được ban hành. Kiểm tra rồi Lưu để phê duyệt và kích hoạt; không suy đoán dung sai hoặc PASS/FAIL.']}
+
+
+def criterion_notes(data, layout):
+    """Resolve notes from the immutable snapshot; old mappings remain unchanged."""
+    inferred={f['cell']:f.get('note_cell') for f in suggest(data)['fields'] if f['kind']=='INPUT'}
+    protected={f['cell'] for f in layout['fields']}|{f.get('assessment_cell') for f in layout['fields']}|{f.get('standard_cell') for f in layout['fields']}
+    result={};used=set()
+    for field in layout['fields']:
+        if field['kind']!='INPUT':continue
+        cell=field.get('note_cell') or inferred.get(field['cell'])
+        if not cell:continue
+        cell=anchor(data,cell)
+        if cell in protected or cell in used:continue
+        if layout.get('signature_cell'):
+            a,b,x,y=region(data,cell);r,c,u,v=region(data,layout['signature_cell'],layout.get('signature_end_cell'))
+            if a<u and x>r and b<v and y>c:continue
+        used.add(cell);result[field['id']]={'cell':cell,'base':text(data,cell)}
+    return result

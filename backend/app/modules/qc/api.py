@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from typing import Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select, func, or_
 from app.auth.security import current_user, require
@@ -118,9 +118,7 @@ def download_pdf(identifier: str, user=Depends(current_user), db=Depends(get_db)
     if obj is None or not obj.form_data:
         raise HTTPException(404, 'Phiếu chưa có biểu mẫu ERP.')
     if obj.template_id:
-        from app.modules.qc.drive_bundle import download_pdf
-        return Response(download_pdf(db,user,obj),media_type='application/pdf',headers={
-            'Content-Disposition':'inline; filename="'+obj.id+'_Bien_Ban_Kiem_Tra.pdf"'})
+        return RedirectResponse(drive_bundle.pdf_link(db,user,obj),status_code=303)
     try:
         from app.modules.qc.pdf import render_pdf
     except ImportError:

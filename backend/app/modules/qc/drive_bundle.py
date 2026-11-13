@@ -126,7 +126,7 @@ def plan_uploads(db,user,identifier,files):
 
 
 @measure('drive.download_pdf')
-def download_pdf(db,user,obj):
+def pdf_link(db,user,obj):
     job=(obj.source or {}).get(JOB,{})
     revision=hashlib.sha256(json.dumps(obj.form_data,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     if job.get('pending') or job.get('pdf_revision')!=revision or not job.get('pdf_id'):
@@ -136,19 +136,8 @@ def download_pdf(db,user,obj):
     item=call(token,'/'+job['pdf_id'],fields='id,parents,mimeType,trashed')
     if item.get('trashed') or obj.drive_folder_id not in item.get('parents',[]) or item.get('mimeType')!='application/pdf':
         raise HTTPException(409,'PDF đã bị xóa/di chuyển hoặc không đúng định dạng.')
-    try:
-        with httpx.stream('GET',BASE+'/'+job['pdf_id']+'?alt=media&supportsAllDrives=true',
-                          headers={'Authorization':'Bearer '+token},timeout=60) as response:
-            if response.status_code!=200:raise HTTPException(502,'Không tải được PDF từ Drive.')
-            content=bytearray()
-            for chunk in response.iter_bytes():
-                content.extend(chunk)
-                if len(content)>25*1024*1024:raise HTTPException(413,'PDF vượt giới hạn 25 MiB.')
-    except httpx.HTTPError:
-        raise HTTPException(502,'Kết nối tải PDF bị gián đoạn.') from None
     db.commit()
-    if not content.startswith(b'%PDF-'):raise HTTPException(502,'Drive không trả về PDF hợp lệ.')
-    return bytes(content)
+    return 'https://drive.google.com/file/d/'+job['pdf_id']+'/view'
 
 
 @measure('drive.upload_http')
@@ -233,8 +222,14 @@ def prepare(db, user, identifier, progress=None):
             if pdf is None:
                 name = obj.id + '_Bien_Ban_Kiem_Tra.pdf' if obj.template_id else document_id(obj.id)+'.pdf'
                 call(token, method='POST', body={'id':job['pdf_id'],'name':name,'mimeType':'application/pdf','parents':[obj.drive_folder_id]}, fields='id')
-            elif pdf.get('trashed') or obj.drive_folder_id not in pdf.get('parents', []):
-                raise HTTPException(409, 'PDF đã bị di chuyển hoặc xóa. Cần khôi phục file trong thư mục QC trước khi thử lại.')
+            elif obj.drive_folder_id not in pdf.get('parents', []):
+                # Leave the moved file alone; recreate the report at the QC destination.
+                job['pdf_id']=generated_id(token)
+                obj.source={**(obj.source or {}),JOB:dict(job)};db.commit()
+                name=obj.id+'_Bien_Ban_Kiem_Tra.pdf' if obj.template_id else document_id(obj.id)+'.pdf'
+                call(token,method='POST',body={'id':job['pdf_id'],'name':name,'mimeType':'application/pdf','parents':[obj.drive_folder_id]},fields='id')
+            elif pdf.get('trashed'):
+                call(token,'/'+job['pdf_id'],method='PATCH',body={'trashed':False},fields='id')
             if progress:progress('upload_pdf')
             upload_pdf(token, job['pdf_id'], content)
             job['pdf_revision'] = revision

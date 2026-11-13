@@ -4,7 +4,7 @@
   let user, selected = null, requestToken = null, requestPayload = '', saved = false, viewOnly = false;
   let objectPage = 1, objectQuery = '', objectEpoch = 0, objectItems = [], objectLoading = false;
   let listPage = 1, listParams = null, listEpoch = 0, listLoading = false, driveEpoch = 0;
-  let drafts = [], saving = false;
+  let drafts = [], saving = false, queueAccepted = false;
   let pollTimer=null;
   function element(tag, text) { const node = document.createElement(tag); if (text != null) node.textContent = text; return node; }
   async function api(url, options = {}) {
@@ -59,7 +59,7 @@
   }
   function newForm(keepDrafts=false) {
     if(!keepDrafts)drafts=[];
-    selected=null; requestToken=null; requestPayload=''; saved=false; viewOnly=false; driveEpoch++;
+    selected=null; requestToken=null; requestPayload=''; saved=false; queueAccepted=false; viewOnly=false; driveEpoch++;
     $('qcForm').reset(); types(); resetObject(); $('checkedAt').value=localTime(); $('staff').value=user.name;
     $('editorHeading').textContent='Tạo Phiếu QC'; $('save').hidden=false; $('save').disabled=false;
     $('newCheck').hidden=false; $('closeEditor').hidden=true; $('topActions').hidden=true; $('formError').textContent='';
@@ -137,6 +137,7 @@
     const body=JSON.stringify(payload);
     if(body!==requestPayload){requestPayload=body;requestToken=crypto.randomUUID();}
     saving=true;objectEpoch++;driveEpoch++;
+    $('message').textContent='Đang lưu phiếu QC và ghi nhận hồ sơ xử lý nền. Vui lòng chờ hệ thống xác nhận…';
     const disabledStates=[...document.querySelectorAll('#qcForm input,#qcForm select,#qcForm textarea,#qcForm button,#drafts button')].map(node=>[node,node.disabled]);
     for(const [node] of disabledStates)node.disabled=true;
     let createdPrefix = null, completedRecords=[];
@@ -145,7 +146,8 @@
         method:selected?'PUT':'POST',headers:{'Content-Type':'application/json','Idempotency-Key':requestToken},body});
       const received=batch?result.items:[result];
       if(received.every(item=>item.sync)){
-        saved=true;drafts=[];
+        saved=true;drafts=[];queueAccepted=true;
+        $('message').textContent='Đã lưu phiếu QC. Worker đang tiếp tục hoàn thiện hồ sơ.';
         const prefix=received[0].id.match(/^QC_\d{6}/)?.[0]||received[0].id;
         location.assign('/qc/list?'+new URLSearchParams({q:prefix}));return;
       }
@@ -163,7 +165,7 @@
       }
       completedRecords=batch?result.items:[result];
       if(listParams)await loadList(listPage);
-    }catch(error){$('formError').textContent=error.message;}
+    }catch(error){$('message').textContent='';$('formError').textContent=error.message;}
     finally{
       saving=false;for(const [node,disabled] of disabledStates)node.disabled=disabled;
       if(!saved){$('findObjects').disabled=viewOnly;}
@@ -191,8 +193,8 @@
         sync.append(element('strong',row.sync_status?row.sync_status+' · '+labels[row.sync_status]:'Hồ sơ trước queue'));
         if(row.sync_step)sync.append(element('p',row.sync_step));
         if(row.sync_error)sync.append(element('p',row.sync_error));
-        if(['FAILED','PENDING'].includes(row.sync_status)&&(user.permissions.includes('QC_EDIT')||row.staff_id===user.id&&user.permissions.includes('QC_CREATE'))){
-          const retry=element('button','Thử lại đồng bộ');retry.type='button';retry.onclick=async()=>{retry.disabled=true;try{await api('/api/qc/'+encodeURIComponent(row.id)+'/retry-sync',{method:'POST'});await loadList(listPage);}catch(error){$('message').textContent=error.message;retry.disabled=false;}};sync.append(retry);
+        if(['FAILED','PENDING','COMPLETED'].includes(row.sync_status)&&(user.permissions.includes('QC_EDIT')||row.staff_id===user.id&&user.permissions.includes('QC_CREATE'))){
+          const retry=element('button',row.sync_status==='COMPLETED'?'Đồng bộ lại hồ sơ':'Thử lại đồng bộ');retry.type='button';retry.onclick=async()=>{retry.disabled=true;try{await api('/api/qc/'+encodeURIComponent(row.id)+'/retry-sync',{method:'POST'});await loadList(listPage);}catch(error){$('message').textContent=error.message;retry.disabled=false;}};sync.append(retry);
         }
         tr.append(sync);
         for(const [value,label] of [[row.evidence,'Mở bằng chứng']]){
@@ -248,7 +250,7 @@
       for(const id of ['quantity','checkedAt','note','result'])$(id).addEventListener('input',()=>window.QCFormUI.invalidate());
       $('qcForm').onsubmit=save;$('newCheck').onclick=nextDraft;
       $('closeEditor').onclick=$('closeEditorTop').onclick=()=>{if(!saving&&!window.QCFormUI.busy()){$('editor').hidden=true;driveEpoch++;objectEpoch++;}};
-      window.addEventListener('beforeunload',event=>{if(drafts.length || saving || window.QCFormUI.busy()){event.preventDefault();event.returnValue='';}});
+      window.addEventListener('beforeunload',event=>{if(!queueAccepted&&(drafts.length || saving || window.QCFormUI.busy())){event.preventDefault();event.returnValue='';}});
       $('filters').onsubmit=e=>{e.preventDefault();listParams=[...new FormData($('filters'))].filter(([,value])=>value);loadList();};
       $('previous').onclick=()=>{if(!listLoading)loadList(listPage-1);};$('next').onclick=()=>{if(!listLoading)loadList(listPage+1);};
       if(view==='list') {

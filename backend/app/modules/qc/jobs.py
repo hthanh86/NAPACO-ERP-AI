@@ -54,6 +54,7 @@ def public_stage(row):
 
 class StageInput(BaseModel):
     files:list[UploadInput]=Field(max_length=500)
+    staging_id:UUID|None=None
 
 
 @router.post('/api/qc/staging',status_code=201)
@@ -64,22 +65,28 @@ def start_stage(data:StageInput,user=Depends(current_user),db=Depends(get_db)):
     if len({(f.name,f.size,f.modified) for f in data.files})!=len(data.files):raise HTTPException(422,'Không chọn trùng một file bằng chứng trong cùng hồ sơ.')
     # Serialize reservation checks per user, so parallel tabs cannot exceed quota.
     db.scalar(select(User).where(User.id==user.id).with_for_update())
+    row=owned(db,user,str(data.staging_id)) if data.staging_id else None
+    if row and row.status!='STAGING':raise HTTPException(409,'Staging đã gắn hồ sơ hoặc hết hạn; không được sửa.')
+    existing=deepcopy(row.manifest) if row else []
+    keys={(f['name'],f['size'],f['modified']) for f in existing}
+    additions=[f for f in data.files if (f.name,f.size,f.modified) not in keys]
+    if len(existing)+len(additions)>500:raise HTTPException(422,'Tối đa 500 file bằng chứng trong một hồ sơ.')
     reservations=db.scalars(select(QCJob).where(QCJob.owner_id==user.id,QCJob.status.in_(['STAGING','PENDING','PROCESSING','FAILED','ATTACHED']))).all()
     reserved={(f['stage'],f['id']):f['size'] for job in reservations for f in job.manifest
         if not f.get('cleaned') and (job.status!='ATTACHED' or file_path(f['stage'],f['id']).is_file())}
     used=sum(reserved.values())
-    if used+sum(f.size for f in data.files)>MAX_OWNER:raise HTTPException(413,'Đã vượt hạn mức staging. Hoàn tất hồ sơ hoặc chờ dọn file hết hạn.')
-    row=QCJob(id=str(uuid4()),owner_id=user.id,status='STAGING',manifest=[])
-    directory=ROOT/row.id;directory.mkdir(parents=True,mode=0o700)
+    if used+sum(f.size for f in additions)>MAX_OWNER:raise HTTPException(413,'Đã vượt hạn mức staging. Hoàn tất hồ sơ hoặc chờ dọn file hết hạn.')
+    row=row or QCJob(id=str(uuid4()),owner_id=user.id,status='STAGING',manifest=[])
+    directory=ROOT/row.id;directory.mkdir(parents=True,exist_ok=True,mode=0o700)
     sync_dir(ROOT)
-    files=[]
-    for item in data.files:
+    files=existing
+    for item in additions:
         file={**item.model_dump(),'id':str(uuid4()),'stage':row.id,'offset':0,'ready':item.size==0}
         path=file_path(row.id,file['id'])
         with path.open('xb') as out:out.flush();os.fsync(out.fileno())
         if item.size==0:file['sha256']=hashlib.sha256(b'').hexdigest()
         files.append(file)
-    sync_dir(directory);row.manifest=files;db.add(row);db.commit()
+    sync_dir(directory);row.manifest=files;row.updated_at=stamp();db.add(row);db.commit()
     return public_stage(row)
 
 
@@ -182,13 +189,16 @@ def retry(identifier:str,user=Depends(current_user),db=Depends(get_db)):
     obj=writable_record(db,user,identifier)
     row=db.scalar(select(QCJob).where(QCJob.qc_id==identifier).with_for_update())
     if not row:raise HTTPException(409,'Phiếu cũ chưa có job nền. Dùng chức năng bổ sung bằng chứng để tiếp nhận.')
-    if row.status not in {'FAILED','PENDING'}:raise HTTPException(409,'Chỉ thử lại job chờ hoặc lỗi.')
+    if row.status not in {'FAILED','PENDING','COMPLETED'}:raise HTTPException(409,'Worker đang xử lý; hãy chờ hoàn tất trước khi đồng bộ lại.')
     if row.revision!=mapping.digest(obj.form_data):
         repair_json_revision(db,user,obj,row)
     credential=db.get(GoogleCredential,row.owner_id)
     if not credential or credential.subject!=row.google_subject:raise HTTPException(403,'Kết nối lại đúng tài khoản Google của chủ job trước khi thử lại.')
-    if any(not f.get('done') and not file_path(f['stage'],f['id']).is_file() for f in row.manifest):
-        raise HTTPException(409,'File staging đã hết hạn hoặc bị mất. Hãy chọn lại các bằng chứng chưa hoàn tất.')
+    if row.status=='COMPLETED':
+        from app.modules.qc import drive_bundle
+        drive_bundle.schedule(obj,user,None)
+        state=dict(obj.source[drive_bundle.JOB]);state['pdf_revision']=None;state['owner']=row.owner_id
+        obj.source={**obj.source,drive_bundle.JOB:state}
     row.status='PENDING';row.attempts=0;row.available_at=row.updated_at=stamp();row.last_error='';db.commit()
     return job_record(row)
 

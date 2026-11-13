@@ -32,9 +32,10 @@
 <section id="mappingPanel" hidden><h2>Mapping và phê duyệt</h2><p id="mappingStatus" role="status"></p>
 <div class="actions"><button type="button" id="suggestMapping">Tải lại từ Google Sheets</button><button type="button" id="saveMapping">Lưu · Phê duyệt và kích hoạt</button><button type="button" id="activateTemplate">Kích hoạt lại</button><button type="button" id="deactivateTemplate">Ngừng kích hoạt</button><button type="button" id="verifyTemplate">Kiểm tra thay đổi nguồn</button><button type="button" id="newVersion">Tạo phiên bản mới</button></div>
 <div class="actions"><label>Ô đầu vùng chữ ký<input id="signatureCell" maxlength="5" placeholder="Chọn ô trên preview"></label><label>Ô cuối vùng chữ ký (nếu nhiều ô)<input id="signatureEndCell" maxlength="5" placeholder="Ví dụ C29"></label><button id="approveSignatureLocation" type="button">Phê duyệt bổ sung vùng chữ ký</button></div>
+<p id="signatureRangeInfo" role="status" aria-live="polite"></p>
 <p>Chọn một vùng trống đủ lớn cho chữ ký và họ tên, không đè kết quả hay tiêu chuẩn. Mẫu đã duyệt có thể bổ sung vị trí ký một lần; đổi vị trí sau đó cần phiên bản mới. Phê duyệt bổ sung không thay mapping các trường đã có.</p>
 <p>Trường và tiêu chí lấy từ Google Sheets; sửa trên Google Sheets rồi tải lại, không thêm hoặc xóa trường tại ERP. Chọn ô địa chỉ trong bảng mapping rồi nhấn trực tiếp ô trên preview để chỉnh vị trí. Nhấn Lưu là xác nhận mapping, phê duyệt và kích hoạt template trong một lần.</p>
 <p id="mappingWarnings"></p><p id="mappingPick" role="status"></p>
 <div id="mappingPreview" class="sheet-preview" tabindex="0" aria-label="Chọn ô để mapping"></div>
-<div class="table-wrap"><table class="mapping-fields"><thead><tr><th>Tên trường / mã từ template</th><th>Loại / nguồn ERP</th><th>Ô kết quả / dữ liệu</th><th>Ô tiêu chuẩn</th><th>Ô đánh giá</th><th>Kiểu / đơn vị</th><th>Cấu hình</th></tr></thead><tbody id="mappingFields"></tbody></table></div></section>
+<div class="table-wrap"><table class="mapping-fields"><thead><tr><th>Tên trường / mã từ template</th><th>Loại / nguồn ERP</th><th>Ô kết quả / dữ liệu</th><th>Ô tiêu chuẩn</th><th>Ô đánh giá</th><th>Ô ghi chú</th><th>Kiểu / đơn vị</th><th>Cấu hình</th></tr></thead><tbody id="mappingFields"></tbody></table></div></section>
 </main></body></html>

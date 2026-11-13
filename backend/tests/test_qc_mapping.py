@@ -224,3 +224,19 @@ def test_new_version_cannot_reuse_approved_spreadsheet(clients,monkeypatch):
     created=admin.post('/api/qc/templates',json=new)
     assert created.status_code==201,created.text
     assert created.json()['approved_at'] is None and created.json()['status']=='DRAFT'
+
+
+def test_criterion_notes_use_approved_snapshot_and_preserve_tolerance():
+    source=sheet();source['grid']['rowData'][0]['values'][4]['formattedValue']='Dung sai / Ghi chú'
+    layout={'fields':fields()}
+    before=deepcopy(layout)
+    targets=mapping.criterion_notes(source,layout)
+    assert targets['width']=={'cell':'E2','base':'± 2 mm'}
+    assert targets['look']=={'cell':'E3','base':'Không loang'}
+    assert layout==before  # Existing released JSON remains immutable.
+    proposals=mapping.suggest(source)['fields']
+    assert next(f for f in proposals if f['kind']=='INPUT')['note_cell']=='E2'
+    explicit=fields();explicit[2]['note_cell']='E2'
+    assert mapping.validate(source,mapping.MappingInput(fields=explicit),'QC NVL')['fields'][2]['note_cell']=='E2'
+    explicit[2]['note_cell']='B2'
+    with pytest.raises(HTTPException):mapping.validate(source,mapping.MappingInput(fields=explicit),'QC NVL')

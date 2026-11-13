@@ -1,0 +1,20 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const nodes=new Map(),node=()=>({value:'',children:[],replaceChildren(...c){this.children=c;},append(...c){this.children.push(...c);}});
+const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
+global.document={getElementById:$,createElement:()=>node()};
+let stage;
+global.window={NAPACO_USER:{permissions:[]},QCStaging:class{constructor(entries){this.entries=[...entries];this.done=true;stage=this;}add(entries){this.entries.push(...entries);}remove(e){this.entries=this.entries.filter(x=>x!==e);}stop(){}payload(){return 'same-stage';}}};
+global.fetch=async()=>({ok:true,status:200,headers:{get:()=>null},json:async()=>({items:[],root_folder_id:'root'})});
+vm.runInThisContext(fs.readFileSync('/app/frontend/qc/forms.js','utf8'));
+const file=name=>({name,size:3,lastModified:1,type:'image/jpeg'});
+(async()=>{
+ await window.QCFormUI.init();
+ const choose=files=>{$('evidenceFiles').files=files;$('evidenceFiles').onchange();};
+ choose([file('a.jpg')]);const first=stage;choose([file('b.jpg'),file('a.jpg')]);
+ assert.equal(stage,first);assert.equal(window.QCFormUI.files().length,2);assert.equal(stage.entries.length,2);
+ choose([]);assert.equal(window.QCFormUI.files().length,2,'cancel selection keeps previous attachments');
+ $('fileSummary').children[0].children[0].onclick();assert.deepEqual(window.QCFormUI.files().map(e=>e.file.name),['b.jpg']);
+ choose([file('a.jpg')]);assert.equal(window.QCFormUI.files().length,2);assert.equal($('evidenceFiles').value,'');
+ assert.equal(window.QCFormUI.payload().staging_id,'same-stage');
+ console.log('PASS: accumulate file choices, avoid duplicates, cancel preserves files, remove/reselect individual file');
+})().catch(error=>{console.error(error);process.exitCode=1;});

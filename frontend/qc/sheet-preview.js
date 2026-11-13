@@ -7,6 +7,25 @@
     for (let n = index + 1; n; n = Math.floor((n - 1) / 26)) label = String.fromCharCode(65 + (n - 1) % 26) + label;
     return label;
   }
+  function range(data,start,end=start){
+    const position=value=>{
+      const match=/^([A-Z]{1,2})([1-9][0-9]{0,2})$/.exec(value||'');if(!match)return null;
+      let col=0;for(const ch of match[1])col=col*26+ch.charCodeAt(0)-64;
+      const row=Number(match[2])-1;return row<data.row_count&&col<=data.column_count?[row,col-1]:null;
+    };
+    const a=position(start),b=position(end);if(!a||!b)return null;
+    let r0=Math.min(a[0],b[0]),c0=Math.min(a[1],b[1]),r1=Math.max(a[0],b[0])+1,c1=Math.max(a[1],b[1])+1,changed;
+    do{
+      changed=false;
+      for(const merge of data.merges||[]){
+        const r=merge.startRowIndex||0,c=merge.startColumnIndex||0,x=merge.endRowIndex,y=merge.endColumnIndex;
+        if(r<r1&&x>r0&&c<c1&&y>c0&&(r<r0||c<c0||x>r1||y>c1)){
+          r0=Math.min(r0,r);c0=Math.min(c0,c);r1=Math.max(r1,x);c1=Math.max(c1,y);changed=true;
+        }
+      }
+    }while(changed);
+    return {r0,c0,r1,c1,start:letters(c0)+(r0+1),end:letters(c1-1)+r1};
+  }
   function render(container, data, options = {}) {
     const theme = Object.fromEntries((data.theme?.themeColors || []).map(item => [item.colorType, item.color?.rgbColor]));
     function color(rgb, style) {
@@ -42,6 +61,14 @@
       for (let r=r0;r<Math.min(m.endRowIndex,rowCount);r++) for (let c=c0;c<Math.min(m.endColumnIndex,colCount);c++) if(r!==r0||c!==c0) covered.add(r+':'+c);
     }
     const table = el('table'); table.className = 'google-sheet';
+    let dragStart=null,lastRange='';
+    function selectRange(cell){const area=range(data,dragStart,cell);if(area&&lastRange!==area.start+':'+area.end){lastRange=area.start+':'+area.end;options.onRangeSelect(area.start,area.end);}}
+    function finishRange(){dragStart=null;document.removeEventListener('pointermove',moveRange);document.removeEventListener('pointerup',finishRange);document.removeEventListener('pointercancel',finishRange);}
+    function moveRange(event){
+      if(!dragStart)return;
+      const cell=document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-cell]');
+      if(cell&&table.contains(cell)){event.preventDefault();selectRange(cell.dataset.cell);}
+    }
     const cols = el('colgroup'); cols.append(el('col'));
     for(let c=0;c<colCount;c++) {
       const col = el('col'), meta = grid.columnMetadata?.[c-colStart] || {};
@@ -66,14 +93,19 @@
         format(cell,value);
         if (options.onSelect) {
           cell.tabIndex=0; cell.setAttribute('aria-label','Ô '+cellAddress);
-          cell.onclick=()=>options.onSelect(cellAddress);
+          cell.onclick=()=>{if(!options.canSelectRange?.())options.onSelect(cellAddress);};
           cell.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();options.onSelect(cellAddress);}};
         }
+        if(options.onRangeSelect)cell.onpointerdown=event=>{
+          if(event.button!==0||!options.canSelectRange?.())return;
+          event.preventDefault();dragStart=cellAddress;lastRange='';selectRange(cellAddress);
+          document.addEventListener('pointermove',moveRange,{passive:false});document.addEventListener('pointerup',finishRange);document.addEventListener('pointercancel',finishRange);
+        };
         tr.append(cell);
       }
       body.append(tr);
     }
     table.append(body); container.replaceChildren(table);
   }
-  window.QCSheetPreview = {render};
+  window.QCSheetPreview = {render,range};
 })();

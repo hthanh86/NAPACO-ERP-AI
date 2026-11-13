@@ -31,11 +31,13 @@
       const remove=button('Bỏ file',()=>{if(!working){staging?.remove(entry);state.files=state.files.filter(item=>item!==entry);if(!state.files.length){staging?.stop();staging=null;}summary();}});remove.disabled=working;row.append(remove);return row;}));
     if(staging){const note=el('li',staging.error|| (staging.done?'Đã tiếp nhận an toàn. Có thể lưu phiếu và đóng tab sau khi nhận QC_ID.':'Đang tiếp nhận file vào staging…'));if(staging.error)note.append(button('Thử lại staging',()=>staging.run()));$('fileSummary').append(note);}
     $('downloadFormPdf').hidden=record?.template_id?!record.pdf_url:!record?.form_data;
-    if(record?.form_data)$('downloadFormPdf').href='/api/qc/'+encodeURIComponent(record.id)+'/pdf';
+    if(record?.form_data)$('downloadFormPdf').href=record.pdf_url||'/api/qc/'+encodeURIComponent(record.id)+'/pdf';
+    $('saveEvidence').textContent=state.files.length?'Lưu bằng chứng bổ sung':record?.sync?.status==='COMPLETED'?'Đồng bộ lại hồ sơ':'Thử lại đồng bộ';
     const canAppend=!!record&&(window.NAPACO_USER?.permissions.includes('QC_EDIT')||record.staff_id===window.NAPACO_USER?.id&&window.NAPACO_USER?.permissions.includes('QC_CREATE'));
     $('evidenceFiles').disabled=working||!!record&&!canAppend;
     $('saveEvidence').hidden=!canAppend;
     $('evidenceStatus').textContent=record?.sync?record.sync.status+' · '+record.sync.step+' · '+(record.sync.error||''):record?(record.evidence_pending?'Hồ sơ chưa hoàn tất · '+(record.evidence_step||'đang chờ')+' · '+(record.evidence_error||''):'Hồ sơ đã hoàn tất các file được đăng ký.') : '';
+    if(record?.sync?.metrics?.skipped_evidence?.length)$('evidenceStatus').textContent+=' · Đã bỏ qua '+record.sync.metrics.skipped_evidence.length+' bằng chứng không còn file.';
   }
   function editForm(){
     const definition=activeDefinition();
@@ -122,10 +124,19 @@
   }
   window.QCFormUI={
     async init(){const config=await api('/api/qc/forms');catalog=config.items;rootFolder=config.root_folder_id;$('chooseForm').onclick=editForm;$('chooseFolder').onclick=chooseFolder;
-      $('evidenceFiles').onchange=()=>{if(working)return;staging?.stop();state.files=[...$('evidenceFiles').files].map(file=>({file,offset:0,complete:false}));staging=state.files.length?new window.QCStaging(state.files,summary):null;summary();};
+      $('evidenceFiles').onchange=()=>{
+        if(working)return;
+        const keys=new Set(state.files.map(e=>JSON.stringify([e.file.name,e.file.size,e.file.lastModified]))),added=[];
+        for(const file of $('evidenceFiles').files){const key=JSON.stringify([file.name,file.size,file.lastModified]);if(!keys.has(key)){keys.add(key);added.push({file,offset:0,complete:false});}}
+        $('evidenceFiles').value='';
+        if(!added.length)return;
+        state.files.push(...added);
+        if(staging)staging.add(added);else staging=new window.QCStaging(state.files,summary);
+        summary();
+      };
       $('saveEvidence').onclick=async()=>{if(!record||working)return;try{
         const manifest=state.files.map(e=>({name:e.file.name,size:e.file.size,modified:e.file.lastModified,mime:e.file.type||'application/octet-stream'}));
-        if(!staging){if(record.sync){await api('/api/qc/'+encodeURIComponent(record.id)+'/retry-sync',{method:'POST'});$('evidenceStatus').textContent='PENDING · Đã yêu cầu worker thử lại.';return;}throw Error('Hãy chọn file để tiếp nhận staging trước.');}
+        if(!staging){if(record.sync){record.sync=await api('/api/qc/'+encodeURIComponent(record.id)+'/retry-sync',{method:'POST'});record.pdf_url=null;summary();window.dispatchEvent(new CustomEvent('qc-evidence-updated',{detail:record}));return;}throw Error('Hãy chọn file để tiếp nhận staging trước.');}
         record=await api('/api/qc/'+encodeURIComponent(record.id)+'/queue-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({staging_id:staging.payload(),files:manifest,parent_folder_id:state.parent?.id||null})});
         state.files=[];staging=null;summary();window.dispatchEvent(new CustomEvent('qc-evidence-updated',{detail:record}));
       }catch(error){$('formError').textContent=error.message;}};

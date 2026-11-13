@@ -55,8 +55,7 @@ def render(db,user,obj,token,progress=None):
         raise HTTPException(422,'Phiếu cần chữ ký OAuth và mapping vị trí ký đã duyệt trước khi xuất PDF.')
     revision=mapping.digest(saved)
     source=sheets.first_tab(db,user,definition['spreadsheet_id'],True)
-    if mapping.source_hash(source)!=definition['source_hash'] or source['sheet_id']!=definition['sheet_id']:
-        raise HTTPException(409,'Template Google gốc đã thay đổi so với phiên bản trên phiếu. Không xuất từ nguồn không khớp.')
+    restore=mapping.source_hash(source)!=definition['source_hash'] or source['sheet_id']!=definition['sheet_id']
     job=(obj.source or {}).get(JOB,{})
     key=hashlib.sha256((obj.id+revision).encode()).hexdigest()
     temporary=job.get('temp_copy_id') if job.get('temp_revision')==revision else None
@@ -74,9 +73,13 @@ def render(db,user,obj,token,progress=None):
         raise HTTPException(409,'Từ chối ghi vào template gốc.')
     copied=sheets.first_tab(db,user,temporary,True)
     identity_copy={**copied,'spreadsheet_id':source['spreadsheet_id'],'title':source['title']}
-    if mapping.source_hash(identity_copy)!=definition['source_hash'] and job.get('temp_copy_id')!=temporary:
+    if not restore and mapping.source_hash(identity_copy)!=definition['source_hash'] and job.get('temp_copy_id')!=temporary:
         raise HTTPException(409,'Bản sao Google không khớp template đã duyệt.')
     gid=copied['sheet_id'];base='https://sheets.googleapis.com/v4/spreadsheets/'+temporary
+    if restore:
+        if progress:progress('restore_saved_template')
+        with measure('sheets.restore_saved_template'):
+            google_json(base+':batchUpdate',token=token,method='POST',body=json.dumps({'requests':restore_snapshot(snap,gid)}).encode(),headers={'Content-Type':'application/json'})
     values={};answers={a['id']:a for a in saved['input']['answers']}
     for field in layout['fields']:
         if field['kind']=='ERP':values[field['cell']]=saved['auto_values'].get(field['id'],'')
@@ -85,6 +88,8 @@ def render(db,user,obj,token,progress=None):
             answer=answers[field['id']]
             values[field['cell']]='Không áp dụng' if answer['assessment']=='NA' else answer['actual']+(' '+field['unit'] if answer['actual'] and field.get('unit') else '')
             if field.get('assessment_cell'):values[field['assessment_cell']]={'PASS':'Đạt','FAIL':'Không đạt','NA':'N/A',None:''}[answer['assessment']]
+    for identifier,target in mapping.criterion_notes(snap,layout).items():
+        values[target['cell']]=answers[identifier].get('note','')
     requests=[]
     for cell,value in values.items():
         row,col=mapping.position(cell)
@@ -128,6 +133,38 @@ def render(db,user,obj,token,progress=None):
     from app.modules.qc.pdf_signature import apply_signature
     if progress:progress('signature_pdf')
     return apply_signature(content,saved,marker,background)
+
+
+def restore_snapshot(snap,gid):
+    """Restore the record's frozen cells/layout on its temporary copy only.
+
+    Copying the source retains its drawings/logo. Captured formulas are frozen
+    to their saved display values so later source edits cannot change old QC.
+    """
+    grid=snap.get('grid') or {};row_start=grid.get('startRow',0);col_start=grid.get('startColumn',0)
+    rows=[]
+    for r in range(snap['row_count']):
+        source=(grid.get('rowData') or [])[r-row_start] if row_start<=r<row_start+len(grid.get('rowData') or []) else {}
+        values=[]
+        for c in range(snap['column_count']):
+            cell=(source.get('values') or [])[c-col_start] if col_start<=c<col_start+len(source.get('values') or []) else {}
+            value=deepcopy(cell.get('userEnteredValue'))
+            if value is None or 'formulaValue' in value:value={'stringValue':str(cell.get('formattedValue',''))}
+            values.append({'userEnteredValue':value,'userEnteredFormat':deepcopy(cell.get('effectiveFormat') or {})})
+        rows.append({'values':values})
+    requests=[{'unmergeCells':{'range':{'sheetId':gid}}},{'clearBasicFilter':{'sheetId':gid}},
+        {'updateSheetProperties':{'properties':{'sheetId':gid,'gridProperties':{'rowCount':snap['row_count'],'columnCount':snap['column_count']}},'fields':'gridProperties.rowCount,gridProperties.columnCount'}},
+        {'updateCells':{'range':{'sheetId':gid},'rows':rows,'fields':'userEnteredValue,userEnteredFormat'}}]
+    for dimension,count,key,start,default in [('ROWS',snap['row_count'],'rowMetadata',row_start,21),('COLUMNS',snap['column_count'],'columnMetadata',col_start,100)]:
+        groups=[]
+        for index in range(count):
+            meta=(grid.get(key) or [])[index-start] if start<=index<start+len(grid.get(key) or []) else {}
+            props={'pixelSize':meta.get('pixelSize',default),'hiddenByUser':bool(meta.get('hiddenByUser') or meta.get('hiddenByFilter'))}
+            if groups and groups[-1][2]==props:groups[-1][1]=index+1
+            else:groups.append([index,index+1,props])
+        for first,last,props in groups:requests.append({'updateDimensionProperties':{'range':{'sheetId':gid,'dimension':dimension,'startIndex':first,'endIndex':last},'properties':props,'fields':'pixelSize,hiddenByUser'}})
+    requests.extend({'mergeCells':{'range':{**merge,'sheetId':gid},'mergeType':'MERGE_ALL'}} for merge in snap.get('merges',[]))
+    return requests
 
 
 @measure('sheets.cleanup_temp')

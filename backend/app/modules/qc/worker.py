@@ -74,9 +74,17 @@ def verify_remote(db,user,obj,manifest,check):
         check('verify_evidence')
         key=drive_bundle.upload_key(obj.id,UploadInput(**{k:file[k] for k in ('name','size','mime','modified')}))
         found=drive_bundle.call(token,q=f"'{obj.drive_folder_id}' in parents and trashed=false and appProperties has {{ key='qc_upload' and value='{key}' }}",fields='files(id,size,parents,trashed)',pageSize=2,includeItemsFromAllDrives='true').get('files',[])
+        if not found and (file.get('cleaned') or file.get('skipped')):
+            file['skipped']=True;file['skip_reason']='Bằng chứng cũ không còn trên Drive hoặc không còn file staging.'
+            continue
         if len(found)!=1 or int(found[0].get('size',-1))!=file['size']:
             raise HTTPException(502,'Bằng chứng chưa đủ hoặc bị trùng trên Drive. Chưa hoàn tất hồ sơ.')
-        file['drive_id']=found[0]['id'];file['done']=True
+        file['drive_id']=found[0]['id'];file['done']=True;file.pop('skipped',None);file.pop('skip_reason',None)
+    skipped={drive_bundle.upload_key(obj.id,UploadInput(**{k:f[k] for k in ('name','size','mime','modified')})) for f in manifest if f.get('skipped')}
+    if skipped:
+        state=dict((obj.source or {}).get(drive_bundle.JOB,{}))
+        for field in ('expected_uploads','completed_uploads'):state[field]=[key for key in state.get(field,[]) if key not in skipped]
+        obj.source={**(obj.source or {}),drive_bundle.JOB:state};db.commit()
 
 
 def run_job(identifier,lease):
@@ -111,7 +119,9 @@ def run_job(identifier,lease):
                     check('upload_evidence_'+str(index+1))
                     if file.get('done'):continue
                     path=jobs.file_path(file['stage'],file['id'])
-                    if not path.is_file():raise HTTPException(422,'File staging bị mất hoặc hết hạn. Cần chọn lại bằng chứng.')
+                    if not path.is_file():
+                        file['skipped']=True;file['skip_reason']='File staging không còn; đồng bộ PDF và bằng chứng còn lại.'
+                        checkpoint(identifier,lease,manifest=files);continue
                     with path.open('rb') as inp:
                         if hashlib.file_digest(inp,'sha256').hexdigest()!=file['sha256']:
                             raise HTTPException(422,'Checksum staging không khớp. Không upload file lỗi.')
@@ -168,6 +178,7 @@ def run_job(identifier,lease):
             row.available_at=jobs.stamp()+timedelta(seconds=min(60,10*row.attempts))
         else:
             row.status='COMPLETED';row.current_step='complete';row.last_error=''
+            row.metrics={**(row.metrics or {}),'skipped_evidence':[{'name':f['name'],'reason':f.get('skip_reason','')} for f in row.manifest if f.get('skipped')]}
             accepted=(row.metrics or {}).get('accepted_at')
             if accepted:row.metrics={**row.metrics,'accepted_to_completed_ms':round((jobs.stamp()-jobs.datetime.fromisoformat(accepted)).total_seconds()*1000,3)}
             # Keep manifest identities for reconciliation; remove bytes only after verification.

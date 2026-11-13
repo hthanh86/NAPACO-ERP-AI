@@ -110,10 +110,12 @@ def test_pdf_signature_uses_actual_google_region_and_rejects_missing_marker():
     with pytest.raises(HTTPException):apply_signature(original,data,(.9,.1,.1),(1,1,1))
 
 
-def test_sheets_copy_batch_write_readback_never_writes_original(monkeypatch):
+@pytest.mark.parametrize('source_changed',[False,True])
+def test_sheets_copy_batch_write_readback_never_writes_original(monkeypatch,source_changed):
     from app.modules.qc import sheets_pdf,pdf_signature
     from urllib.parse import parse_qs,urlsplit
-    source=sheet();layout=mapping.validate(source,mapping.MappingInput(fields=fields(),signature_cell='E4',signature_end_cell='F6'),'QC NVL')
+    source=sheet();source['grid']['rowData'][0]['values'][4]['formattedValue']='Dung sai / Ghi chú'
+    layout=mapping.validate(source,mapping.MappingInput(fields=fields(),signature_cell='E4',signature_end_cell='F6'),'QC NVL')
     data={'kind':'google_template','template':{'spreadsheet_id':source['spreadsheet_id'],'sheet_id':42,
           'source_hash':mapping.source_hash(source),'snapshot':source,'mapping':layout},
           'context':{'qc_id':'QC_TEST'},'auto_values':{'qc':'QC_TEST','po_width':'500'},
@@ -122,7 +124,9 @@ def test_sheets_copy_batch_write_readback_never_writes_original(monkeypatch):
     obj=SimpleNamespace(id='QC_TEST',template_id='template',drive_folder_id='folder',source={},form_data=data)
     writes=[]
     def first(db,user,identifier,preview):
-        return deepcopy(source) if identifier==source['spreadsheet_id'] else {**deepcopy(source),'spreadsheet_id':'temporary-copy','title':'Copy'}
+        live=deepcopy(source)
+        if source_changed:live['merges']=[]
+        return live if identifier==source['spreadsheet_id'] else {**live,'spreadsheet_id':'temporary-copy','title':'Copy'}
     def call(token,path='',**kwargs):
         if kwargs.get('q'):return {'files':[]}
         assert path=='/'+source['spreadsheet_id']+'/copy'
@@ -135,7 +139,8 @@ def test_sheets_copy_batch_write_readback_never_writes_original(monkeypatch):
         assert url=='https://sheets.googleapis.com/v4/spreadsheets/temporary-copy:batchUpdate'
         writes.append(json.loads(kwargs['body']))
         return {}
-    values={'A6':'QC_TEST','B6':'500','C2':'501 mm','D2':'Đạt','B2':'Theo PO','C3':'Sạch','D3':'Đạt'}
+    data['input']['answers'][0]['note']='siêu chuẩn'
+    values={'A6':'QC_TEST','B6':'500','C2':'501 mm','D2':'Đạt','B2':'Theo PO','C3':'Sạch','D3':'Đạt','E2':'siêu chuẩn','E3':''}
     def read(url,token):
         ranges=parse_qs(urlsplit(url).query)['ranges']
         return {'valueRanges':[{'values':[[values[r.rsplit('!',1)[-1]]]]} for r in ranges]}
@@ -147,8 +152,12 @@ def test_sheets_copy_batch_write_readback_never_writes_original(monkeypatch):
     monkeypatch.setattr(sheets_pdf,'export',lambda *args:b'exported-google-pdf')
     monkeypatch.setattr(pdf_signature,'apply_signature',lambda content,*args:content+b'-signed')
     assert sheets_pdf.render(None,None,obj,'token')==b'exported-google-pdf-signed'
-    assert len(writes)==1
-    assert sum('updateCells' in request for request in writes[0]['requests'])==len(values)
+    assert len(writes)==(2 if source_changed else 1)
+    if source_changed:assert any('mergeCells' in request for request in writes[0]['requests'])
+    assert sum('updateCells' in request for request in writes[-1]['requests'])==len(values)
+    written={mapping.address(item['updateCells']['start']['rowIndex'],item['updateCells']['start']['columnIndex']):item['updateCells']['rows'][0]['values'][0]['userEnteredValue']['stringValue'] for item in writes[-1]['requests'] if 'updateCells' in item}
+    assert written['E2']==values['E2']
+    assert source['grid']['rowData'][1]['values'][4]['formattedValue']=='± 2 mm'
     assert source['grid']['rowData'][1]['values'][1]['formattedValue']=='Theo PO'
 
 
@@ -166,6 +175,7 @@ def test_edit_reuses_own_strokes_and_reconfirms_latest_content(clients,monkeypat
     updated=admin.put('/api/qc/'+saved['id'],json=changed)
     assert updated.status_code==200,updated.text
     current=updated.json()['form_data']
+    assert updated.json()['sync']['status']=='PENDING'
     assert current['input']['signature']==saved['form_data']['input']['signature']
     assert current['signer']['method']=='google_oauth_internal_reconfirmed'
     assert current['signer']['previous_content_hash']==saved['form_data']['signer']['content_hash']
@@ -190,3 +200,23 @@ def test_cannot_reuse_another_identity_or_different_strokes(clients,monkeypatch,
     finally:provider.close()
     response=admin.post('/api/qc/signatures/confirm?qc_id='+saved['id'],json=data)
     assert response.status_code==403,response.text
+
+
+def test_template_pdf_opens_drive_without_downloading_bytes(clients,monkeypatch):
+    from app.main import app
+    from app.core.database import get_db
+    admin,_,conn=clients;row,_,_=stage(admin,monkeypatch)
+    saved=create(admin,qc_payload(row,nvl(conn))).json()
+    provider=app.dependency_overrides[get_db]();db=next(provider)
+    try:
+        obj=db.get(QualityCheck,saved['id']);obj.drive_folder_id='folder'
+        revision=drive_bundle.hashlib.sha256(json.dumps(obj.form_data,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        obj.source={drive_bundle.JOB:{'pending':False,'pdf_id':'pdf-on-drive','pdf_revision':revision}};db.commit()
+    finally:provider.close()
+    monkeypatch.setattr(drive_bundle,'call',lambda *args,**kwargs:{'id':'pdf-on-drive','parents':['folder'],'mimeType':'application/pdf','trashed':False})
+    monkeypatch.setattr(drive_bundle.httpx,'stream',lambda *args,**kwargs:pytest.fail('Must not proxy/download PDF bytes'))
+    detail=admin.get('/api/qc/'+saved['id']).json()
+    assert detail['pdf_url']=='https://drive.google.com/file/d/pdf-on-drive/view'
+    response=admin.get('/api/qc/'+saved['id']+'/pdf',follow_redirects=False)
+    assert response.status_code==303,response.text
+    assert response.headers['location']==detail['pdf_url']

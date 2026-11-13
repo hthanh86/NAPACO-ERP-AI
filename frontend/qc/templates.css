@@ -5,3 +5,19 @@
 .template-busy::before{content:'';width:26px;height:26px;margin-right:14px;border:3px solid #cbd5e1;border-top-color:#183a68;border-radius:50%;animation:template-wait 1s linear infinite;flex-shrink:0}
 @keyframes template-wait{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.template-busy::before{animation:none}}
+/* Reference information inside the mapped QC dialog only. */
+.mapped-dialog .mapped-reference{margin:20px 0;padding:16px 20px;border:1px solid #dce5f0;border-radius:12px;background:#f7faff}
+.mapped-dialog .mapped-reference>summary{color:#183a68;font-weight:700;cursor:pointer}
+.mapped-dialog .mapped-context{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0 0}
+.mapped-dialog .mapped-reference-item{padding:12px 14px;background:#fff;border:1px solid #e3eaf3;border-radius:8px;min-width:0}
+.mapped-dialog .mapped-reference-item dt{font-size:12px;color:#61738d;margin-bottom:6px}
+.mapped-dialog .mapped-reference-item dd{color:#193555;font-weight:600;line-height:1.5;margin:0;overflow-wrap:anywhere}
+.mapped-dialog .mapped-standard{white-space:normal;min-width:180px;line-height:1.5}
+.mapped-dialog .mapped-order-spec{margin-top:6px;padding:6px 9px;border-left:3px solid #5286cc;background:#eff5fd;color:#174477;font-weight:600}
+.mapped-dialog .mapped-standard small{display:block;margin-top:6px;color:#61738d}
+.mapped-dialog .mapped-qc-note{display:block;margin:18px 0;font-weight:600}
+.mapped-dialog .mapped-qc-note textarea{display:block;width:100%;box-sizing:border-box;margin-top:8px;resize:vertical}
+@media(max-width:540px){.mapped-dialog .mapped-context{grid-template-columns:1fr}.mapped-dialog .mapped-reference{padding:12px}}
+#mappingPreview td.signature-range{box-shadow:inset 0 0 0 9999px rgba(139,92,246,.22);outline:2px solid #7c3aed!important;outline-offset:-2px}
+#mappingPreview.signature-picking td{touch-action:none;user-select:none;cursor:crosshair}
+#signatureRangeInfo{padding:10px 14px;border:1px solid #d9c8fa;border-radius:8px;background:#f8f4ff;color:#6030a3;line-height:1.6}

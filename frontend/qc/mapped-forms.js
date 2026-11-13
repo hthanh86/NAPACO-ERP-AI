@@ -20,6 +20,7 @@
     const active=!!entry;
     $('legacyFormSection').hidden=!legacyRecord;$('legacyEvidenceSection').hidden=false;
     $('useLegacyForm').hidden=true;
+    $('qcNoteSection').hidden=active;
     controls();
     $('result').readOnly=active;
     $('mappedSummary').textContent=active?(entry.code+' · v'+entry.version+(draft?' · '+draft.conclusion+' · '+(draft.confirmation||recordReadonly&&record?.form_data.signer?'Đã ký xác nhận':draft.signature?.length?'Giữ nét ký · xác nhận nội dung khi lưu':'Chưa có chữ ký'):' · Chưa nhập kết quả')):'Chọn đối tượng để xác định Google Sheets Template áp dụng.';
@@ -46,9 +47,9 @@
     finally{if(current===epoch){loading=false;controls();}}
   }
   function automatic(){
-    if(record)return record.form_data.auto_values;
+    if(record&&recordReadonly)return record.form_data.auto_values;
     const values={...entry.context,check_type:$('checkType').value,quantity:$('quantity').value,
-      checked_at:$('checkedAt').value,staff_name:window.NAPACO_USER?.name||'',qc_id:'Cấp mã khi lưu',
+      checked_at:$('checkedAt').value,staff_name:window.NAPACO_USER?.name||'',qc_id:record?.id||'Cấp mã khi lưu',
       qc_note:$('note').value,signer_name:window.NAPACO_USER?.name||'',signed_at:'Xác nhận khi ký'};
     return Object.fromEntries(entry.mapping.fields.filter(field=>field.kind==='ERP').map(field=>[field.id,String(values[field.source]??'')]));
   }
@@ -61,18 +62,42 @@
     quantity.type='number';quantity.min='1';quantity.step='1';quantity.required=true;
     quantity.value=$('quantity').value;quantity.disabled=readonly;quantityLabel.append(quantity);modal.append(quantityLabel);
     modal.addEventListener('close',()=>modal.remove());document.body.append(modal);modal.showModal();
-    const context=el('details');context.open=true;context.append(el('summary','Dữ liệu đối tượng từ MySQL'));
+    const context=el('details');context.className='mapped-reference';context.open=true;context.append(el('summary','Dữ liệu chuẩn đối chiếu'));
     const contextGrid=el('dl');contextGrid.className='mapped-context';
     const labels={qc_id:'Mã QC',object_id:'Phiếu nhập / đối tượng',resin:'Nhựa theo PO',material_id:'Mã NVL',supplier_name:'Nhà cung cấp',
       po_id:'Đơn đặt NVL',po_line_id:'Chi tiết PO',width:'Khổ đặt',thickness:'Độ dày đặt',grade:'Phẩm cấp',color:'Màu',esd:'ESD',
       po_quantity:'Số lượng đặt',received_quantity:'Số lượng nhận',product_ids:'Mã sản phẩm',product_names:'Tên sản phẩm',receipt_date:'Ngày nhận',production_date:'Ngày sản xuất'};
     const values=record?.form_data.context||entry.context;
-    for(const [key,label] of Object.entries(labels))if(values[key]!=null&&values[key]!==''){contextGrid.append(el('dt',label),el('dd',String(values[key])));}
+    for(const [key,label] of Object.entries(labels))if(values[key]!=null&&values[key]!==''){
+      const item=el('div');item.className='mapped-reference-item';item.append(el('dt',label),el('dd',String(values[key])));contextGrid.append(item);
+    }
     context.append(contextGrid);modal.append(context);
     const preview=el('div');preview.className='sheet-preview';window.QCSheetPreview.render(preview,entry.snapshot,{selectable:true});
     const nodeAt=cell=>[...preview.querySelectorAll('[data-cell]')].find(node=>node.dataset.cell===cell);
     for(const field of entry.mapping.fields){
       const cell=nodeAt(field.cell);if(cell){cell.classList.add('map-'+field.kind);if(field.kind==='ERP')cell.firstChild.textContent=auto[field.id]||'—';if(field.kind==='INPUT')cell.firstChild.textContent='';}
+    }
+    function reflectERP(source,value){
+      for(const field of entry.mapping.fields.filter(field=>field.kind==='ERP'&&field.source===source)){
+        const cell=nodeAt(field.cell);if(cell)cell.firstChild.textContent=value||'—';
+      }
+    }
+    function reference(field){
+      const standard=el('td');standard.className='mapped-standard';
+      if(field.standard)standard.append(el('div',field.standard));
+      // Display order specifications alongside the approved standard, never infer tolerances.
+      if(values.material_id||$('objectType').value==='NVL'){
+        const name=field.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toLowerCase();
+        const sources=[[/\b(kho rong|kho mang|width)\b/,'width'],[/\b(do day|thickness)\b/,'thickness'],
+          [/\b(mau|color|colour)\b/,'color'],[/\b(pham cap|cap do|grade)\b/,'grade'],
+          [/\b(esd|dien tro)\b/,'esd'],[/\b(loai nhua|resin)\b/,'resin']];
+        for(const [pattern,key] of sources)if(pattern.test(name)&&values[key]!=null&&values[key]!==''){
+          const spec=el('div',labels[key]+': '+values[key]+(['width','thickness'].includes(key)?' mm':''));spec.className='mapped-order-spec';standard.append(spec);
+        }
+      }
+      if(field.unit){const unit=el('small','Đơn vị kết quả: '+field.unit);standard.append(unit);}
+      if(!standard.children.length)standard.textContent='—';
+      return standard;
     }
     const table=el('table'),head=el('tr');for(const label of ['Tiêu chí','Tiêu chuẩn / đơn vị','Kết quả thực tế','Đánh giá','Ghi chú'])head.append(el('th',label));table.append(head);
     const inputs=[];
@@ -83,20 +108,29 @@
       if(field.data_type==='boolean'){actual.placeholder='true / false';}
       for(const [value,label] of [['','Chọn đánh giá'],['PASS','Đạt'],['FAIL','Không đạt'],['NA','Không áp dụng']]){const option=el('option',label);option.value=value;assessment.append(option);}
       assessment.value=old?.assessment||'';note.value=old?.note||'';note.maxLength=2000;
+      note.placeholder=entry.note_cells?.[field.id]?.base||'';
       actual.disabled=assessment.disabled=note.disabled=readonly;
       function reflect(){
         actual.disabled=readonly||assessment.value==='NA';
         if(nodeAt(field.cell))nodeAt(field.cell).firstChild.textContent=assessment.value==='NA'?'N/A':actual.value;
         if(field.assessment_cell&&nodeAt(field.assessment_cell))nodeAt(field.assessment_cell).firstChild.textContent=assessment.value;
+        const target=entry.note_cells?.[field.id];
+        if(target&&nodeAt(target.cell))nodeAt(target.cell).firstChild.textContent=note.value.trim();
       }
-      assessment.onchange=()=>{if(assessment.value==='NA')actual.value='';reflect();};actual.oninput=reflect;reflect();
-      row.append(el('td',field.name+(field.required?' *':'')),el('td',[field.standard,field.unit].filter(Boolean).join(' · ')));
+      assessment.onchange=()=>{if(assessment.value==='NA')actual.value='';reflect();};actual.oninput=note.oninput=reflect;reflect();
+      row.append(el('td',field.name+(field.required?' *':'')),reference(field));
       for(const node of [actual,assessment,note]){const cell=el('td');cell.append(node);row.append(cell);}table.append(row);
       inputs.push({field,actual,assessment,note});
     }
     const wrap=el('div');wrap.className='table-wrap';wrap.append(table);modal.append(wrap,el('p','Chọn đánh giá theo kết quả kiểm tra. ERP không suy đoán dung sai; N/A không phải Đạt.'));
     const conclusion=el('select');for(const [value,label] of [['','Chọn kết luận'],['PASS','Đạt'],['FAIL','Không đạt'],...(readonly&&draft?.conclusion==='NA'?[['NA','N/A (hồ sơ lịch sử)']]:[])]){const option=el('option',label);option.value=value;conclusion.append(option);}
-    conclusion.value=draft?.conclusion||'';conclusion.disabled=readonly;modal.append(el('p','Kết luận'),conclusion);
+    conclusion.setAttribute('aria-label','Kết luận QC');conclusion.value=draft?.conclusion||'';conclusion.disabled=readonly;modal.append(el('p','Kết luận'),conclusion);
+    const qcNote=el('textarea');qcNote.setAttribute('aria-label','Ghi chú phiếu QC');qcNote.rows=4;qcNote.maxLength=20000;qcNote.value=$('note').value;qcNote.disabled=readonly;
+    const noteLabel=el('label','Ghi chú / tình trạng NG / phương án xử lý');noteLabel.className='mapped-qc-note';noteLabel.append(qcNote);modal.append(noteLabel);
+    const reflectConclusion=()=>reflectERP('conclusion',({PASS:'Đạt',FAIL:'Không đạt',NA:'N/A'})[conclusion.value]||'');
+    conclusion.onchange=reflectConclusion;qcNote.oninput=()=>reflectERP('qc_note',qcNote.value);
+    quantity.oninput=()=>reflectERP('quantity',quantity.value);
+    reflectConclusion();reflectERP('qc_note',qcNote.value);reflectERP('quantity',quantity.value);
     modal.append(el('p','Chữ ký xác nhận nội bộ · không phải chữ ký số có chứng thư số'));
     const canvas=el('canvas');canvas.width=900;canvas.height=240;canvas.className='qc-signature';canvas.setAttribute('aria-label','Vùng ký xác nhận QC');modal.append(canvas);
     const pen=canvas.getContext('2d');let strokes=structuredClone(draft?.signature||[]),currentStroke=null;
@@ -127,11 +161,12 @@
         if(!entry.mapping.signature_cell)throw Error('Quản lý cần phê duyệt vùng chữ ký của template trước.');
         const next={template_id:entry.id,source_hash:entry.source_hash,mapping_hash:entry.mapping_hash,answers,conclusion:conclusion.value,signature:strokes,
           reuse_signature:!!record&&JSON.stringify(strokes)===JSON.stringify(record.form_data.input.signature)};
-        const payload={...Object.fromEntries(new FormData($('qcForm'))),form:null,mapped_form:next,result:expected==='PASS'?'OK':'NG'};
+        const payload={...Object.fromEntries(new FormData($('qcForm'))),note:qcNote.value,form:null,mapped_form:next,result:expected==='PASS'?'OK':'NG'};
         const currentEpoch=epoch;loading=true;apply.disabled=true;
         const confirmed=await api('/api/qc/signatures/confirm'+(record?'?qc_id='+encodeURIComponent(record.id):''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         if(currentEpoch!==epoch)return;
         draft={...next,confirmation:confirmed.confirmation};
+        $('note').value=qcNote.value;
         $('result').value=expected==='PASS'?'OK':'NG';mode();modal.close();
       }catch(reason){error.textContent=reason.message;}finally{loading=false;apply.disabled=false;mode();}
     };modal.append(apply);}
@@ -155,7 +190,7 @@
     load(item,viewOnly){
       if(!item.template_id){entry=draft=record=null;legacyRecord=true;legacy.load(item,viewOnly);$('mappedFormSection').hidden=true;mode();return;}
       legacyRecord=false;
-      legacy.reset();record=item;recordReadonly=true;canEditRecord=!viewOnly;const saved=item.form_data;entry={...saved.template,id:saved.template.id,context:saved.context};
+      legacy.reset();record=item;recordReadonly=true;canEditRecord=!viewOnly;const saved=item.form_data;entry={...saved.template,id:saved.template.id,context:saved.context,note_cells:item.criterion_note_cells||{}};
       if(!entry.mapping.signature_cell&&item.signature_mapping_extension){entry.mapping=item.signature_mapping_extension;entry.mapping_hash=item.signature_mapping_hash;}
       draft={...saved.input,template_id:item.template_id};
       legacy.evidenceRecord(item);

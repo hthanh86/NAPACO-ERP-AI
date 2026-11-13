@@ -316,3 +316,85 @@ def test_retry_repairs_only_original_accepted_snapshot(clients,monkeypatch):
         job.last_error='Nội dung QC khác phiên bản job. Cần kiểm tra hồ sơ.';db.commit()
     assert admin.post('/api/qc/'+identifier+'/retry-sync').status_code==409
     with scope() as db:assert db.scalar(select(QCJob).where(QCJob.qc_id==identifier)).revision=='a'*64
+
+
+def test_append_staging_keeps_received_files_and_is_idempotent(clients,monkeypatch):
+    admin,reader,_=clients
+    staged,first=receive(admin,17)
+    original=staged['files'][0]['id']
+    extra={'name':'second.jpg','size':3,'modified':124,'mime':'image/jpeg'}
+    payload={'staging_id':staged['id'],'files':[extra]}
+    assert reader.post('/api/qc/staging',json=payload).status_code in {403,404}
+    added=admin.post('/api/qc/staging',json=payload)
+    assert added.status_code==201,added.text
+    data=added.json();assert data['id']==staged['id'] and len(data['files'])==2
+    assert data['files'][0]['id']==original and data['files'][0]['ready']
+    second=data['files'][1]['id']
+    assert admin.put('/api/qc/staging/'+staged['id']+'/'+second+'?offset=0',content=b'abc').status_code==200
+    monkeypatch.setattr(jobs,'MAX_OWNER',20)
+    # Lost-response retry reuses the registered file; it reserves no extra bytes.
+    retried=admin.post('/api/qc/staging',json=payload)
+    assert retried.status_code==201,retried.text
+    assert len(retried.json()['files'])==2 and retried.json()['files'][1]['id']==second
+    assert retried.json()['files'][1]['ready']
+    denied=admin.post('/api/qc/staging',json={'staging_id':staged['id'],'files':[{**extra,'name':'third.jpg'}]})
+    assert denied.status_code==413
+    with scope() as db:
+        row=db.get(QCJob,staged['id']);assert len(row.manifest)==2
+        assert jobs.file_path(staged['id'],original).read_bytes()==b'x'*17
+        assert jobs.file_path(staged['id'],second).read_bytes()==b'abc'
+        row.status='ATTACHED';db.commit()
+    assert admin.post('/api/qc/staging',json=payload).status_code==409
+
+
+def test_completed_record_can_resync_same_pdf_and_folder(clients,monkeypatch):
+    admin,_,conn=clients;row,_,_=stage(admin,monkeypatch)
+    saved=create(admin,qc_payload(row,nvl(conn))).json()
+    with scope() as db:
+        obj=db.get(QualityCheck,saved['id']);obj.drive_folder_id='same-folder'
+        obj.source={drive_bundle.JOB:{'pdf_id':'same-pdf','pdf_revision':'old-revision','pending':False}}
+        job=db.scalar(select(QCJob).where(QCJob.qc_id==obj.id));job.status='COMPLETED'
+        job.manifest=[{'done':True,'cleaned':True,'stage':job.id,'id':str(uuid4())}]
+        db.commit()
+    response=admin.post('/api/qc/'+saved['id']+'/retry-sync')
+    assert response.status_code==200,response.text
+    assert response.json()['status']=='PENDING'
+    with scope() as db:
+        obj=db.get(QualityCheck,saved['id']);job=db.scalar(select(QCJob).where(QCJob.qc_id==obj.id))
+        assert obj.drive_folder_id=='same-folder'
+        assert obj.source[drive_bundle.JOB]['pdf_id']=='same-pdf'
+        assert obj.source[drive_bundle.JOB]['pdf_revision'] is None and obj.source[drive_bundle.JOB]['pending']
+        assert job.manifest[0]['done'] and job.manifest[0]['cleaned']
+
+
+def test_missing_old_evidence_does_not_block_pdf_sync(monkeypatch):
+    from types import SimpleNamespace
+    file={'name':'deleted.jpg','size':3,'mime':'image/jpeg','modified':1,'done':True,'cleaned':True}
+    obj=SimpleNamespace(id='QC_TEST',drive_folder_id='folder',form_data={'test':True},source={drive_bundle.JOB:{'pdf_id':'pdf','pdf_revision':'revision','pending':False,'expected_uploads':[drive_bundle.upload_key('QC_TEST',jobs.UploadInput(**{k:file[k] for k in ('name','size','mime','modified')}))]}})
+    class DB:
+        def commit(self):pass
+    def remote(token,path='',**kwargs):
+        if path:return {'id':'pdf','mimeType':'application/pdf','parents':['folder'],'size':'2000','trashed':False}
+        return {'files':[]}
+    monkeypatch.setattr(worker,'access_token',lambda *args:'test-token')
+    monkeypatch.setattr(drive_bundle,'in_scope',lambda *args,**kwargs:None)
+    monkeypatch.setattr(drive_bundle,'call',remote)
+    worker.verify_remote(DB(),None,obj,[file],lambda step:None)
+    assert file['skipped'] and obj.source[drive_bundle.JOB]['expected_uploads']==[]
+    fresh={**file,'cleaned':False,'skipped':False}
+    with pytest.raises(HTTPException):worker.verify_remote(DB(),None,obj,[fresh],lambda step:None)
+    def missing_pdf(*args,**kwargs):return {'trashed':True}
+    monkeypatch.setattr(drive_bundle,'call',missing_pdf)
+    with pytest.raises(HTTPException):worker.verify_remote(DB(),None,obj,[file],lambda step:None)
+
+
+def test_restore_snapshot_is_frozen_and_targets_copy_only():
+    from app.modules.qc.sheets_pdf import restore_snapshot
+    snapshot={'row_count':2,'column_count':2,'grid':{'rowData':[{'values':[{'formattedValue':'42','userEnteredValue':{'formulaValue':'=A2+1'},'effectiveFormat':{'textFormat':{'bold':True}}}]}], 'rowMetadata':[{'pixelSize':40}],'columnMetadata':[{'pixelSize':160}]},'merges':[{'sheetId':99,'startRowIndex':1,'endRowIndex':2,'startColumnIndex':0,'endColumnIndex':2}]}
+    original=deepcopy(snapshot);requests=restore_snapshot(snapshot,123)
+    written=next(r['updateCells'] for r in requests if 'updateCells' in r)
+    assert written['range']['sheetId']==123
+    assert written['rows'][0]['values'][0]['userEnteredValue']=={'stringValue':'42'}
+    assert written['rows'][0]['values'][0]['userEnteredFormat']['textFormat']['bold']
+    assert next(r['mergeCells'] for r in requests if 'mergeCells' in r)['range']['sheetId']==123
+    assert snapshot==original

@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const nodes=new Map(),node=()=>({value:'',disabled:false,children:[],replaceChildren(...c){this.children=c;},append(...c){this.children.push(...c);},addEventListener(){},removeAttribute(){},reset(){},querySelectorAll(){return [];},reportValidity(){return true;}});
+const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
+global.document={getElementById:$,createElement:()=>node(),querySelectorAll:()=>[],addEventListener(){}};
+const listeners={},ui={busy:()=>false,async init(){},reset(){},async prepare(){},payload:()=>({mapped_form:{},parent_folder_id:'parent'}),files:()=>[],uploadRecords(){throw Error('Drive must run in worker');}};
+global.window={QCFormUI:ui,NAPACO_IDENTITY:Promise.resolve({name:'QC'}),addEventListener:(name,handler)=>listeners[name]=handler};
+const guard=()=>{let blocked=false;listeners.beforeunload({preventDefault(){blocked=true;}});return blocked;};
+let navigated='',resolveRequest;
+global.location={pathname:'/qc/create',assign(url){assert.equal(guard(),false,'accepted queue must not show Leave site');navigated=url;}};
+global.crypto={randomUUID:()=> 'test-request-key'};
+global.FormData=class{[Symbol.iterator](){return Object.entries({check_type:'QC NVL',object_type:'NVL',object_id:$('objectId').value,quantity:'1'})[Symbol.iterator]();}};
+global.fetch=()=>new Promise(resolve=>resolveRequest=resolve);
+$('checkType').value='QC NVL';
+vm.runInThisContext(fs.readFileSync('/app/frontend/qc/qc.js','utf8'));
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+(async()=>{
+ await tick();assert.equal(typeof $('qcForm').onsubmit,'function');$('objectId').value='NVL_1';$('quantity').value='1';
+ let task=$('qcForm').onsubmit({preventDefault(){}});await tick();
+ assert.equal(guard(),true,'HTTP save still pending must guard navigation');
+ resolveRequest({ok:false,status:409,json:async()=>({detail:'Staging chưa đủ'})});await task;
+ assert.equal(navigated,'');assert.equal($('formError').textContent,'Staging chưa đủ');
+ ui.busy=()=>true;assert.equal(guard(),true,'pending file reception must guard navigation');ui.busy=()=>false;
+ task=$('qcForm').onsubmit({preventDefault(){}});await tick();assert.equal(guard(),true);
+ resolveRequest({ok:true,json:async()=>({items:[{id:'QC_261113_01',sync:{status:'PENDING'}}]})});await task;
+ assert.match(navigated,/^\/qc\/list\?q=QC_261113/);assert.equal(guard(),false);
+ console.log('PASS: no navigation on failed reception, protect pending save/staging, accepted queue redirects without Leave site');
+})().catch(error=>{console.error(error);process.exitCode=1;});
