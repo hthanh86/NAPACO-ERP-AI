@@ -1,0 +1,72 @@
+/* Read-only DOM renderer: Google text never becomes HTML, CSS rules or formulas. */
+(() => {
+  const el = (tag, text) => {const node = document.createElement(tag); if (text != null) node.textContent = text; return node;};
+  const bound = (value, fallback, min, max) => Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+  function letters(index) {
+    let label = '';
+    for (let n = index + 1; n; n = Math.floor((n - 1) / 26)) label = String.fromCharCode(65 + (n - 1) % 26) + label;
+    return label;
+  }
+  function render(container, data) {
+    const theme = Object.fromEntries((data.theme?.themeColors || []).map(item => [item.colorType, item.color?.rgbColor]));
+    function color(rgb, style) {
+      const value = style?.rgbColor || theme[style?.themeColor] || rgb;
+      if (!value) return '';
+      return 'rgb(' + ['red','green','blue'].map(key => Math.round(bound(value[key] ?? 0, 0, 0, 1) * 255)).join(',') + ')';
+    }
+    function format(cell, value) {
+      const f = value.effectiveFormat || {}, text = f.textFormat || {}, s = cell.style;
+      s.backgroundColor = color(f.backgroundColor, f.backgroundColorStyle);
+      s.color = color(text.foregroundColor, text.foregroundColorStyle);
+      s.fontFamily = text.fontFamily || 'Arial';
+      s.fontSize = bound(text.fontSize, 10, 6, 96) + 'pt';
+      s.fontWeight = text.bold ? '700' : '400'; s.fontStyle = text.italic ? 'italic' : 'normal';
+      s.textDecoration = [text.underline && 'underline',text.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none';
+      s.textAlign = {LEFT:'left',CENTER:'center',RIGHT:'right'}[f.horizontalAlignment] || 'left';
+      s.verticalAlign = {TOP:'top',MIDDLE:'middle',BOTTOM:'bottom'}[f.verticalAlignment] || 'bottom';
+      s.whiteSpace = f.wrapStrategy === 'WRAP' ? 'pre-wrap' : 'pre';
+      for (const edge of ['top','bottom','left','right']) {
+        const b = f.borders?.[edge]; if (!b) continue;
+        const styles = {DOTTED:'1px dotted',DASHED:'1px dashed',SOLID:'1px solid',SOLID_MEDIUM:'2px solid',SOLID_THICK:'3px solid',DOUBLE:'3px double',NONE:'0 none'};
+        if (styles[b.style]) s['border' + edge[0].toUpperCase() + edge.slice(1)] = styles[b.style] + ' ' + (color(b.color,b.colorStyle) || '#000');
+      }
+    }
+    const grid = data.grid || {}, rows = grid.rowData || [], rowStart = grid.startRow || 0, colStart = grid.startColumn || 0;
+    const merges = (data.merges || []).filter(m => (m.startRowIndex || 0) < data.row_count && (m.startColumnIndex || 0) < data.column_count);
+    const rowCount = Math.min(data.row_count, Math.max(1, rowStart + rows.length, ...merges.map(m => m.endRowIndex)));
+    const colCount = Math.min(data.column_count, Math.max(1, ...rows.map(r => colStart + (r.values || []).length), ...merges.map(m => m.endColumnIndex)));
+    const covered = new Set(), anchors = new Map();
+    for (const m of merges) {
+      const r0 = m.startRowIndex || 0, c0 = m.startColumnIndex || 0;
+      anchors.set(r0 + ':' + c0, {rows:Math.min(m.endRowIndex,rowCount)-r0,cols:Math.min(m.endColumnIndex,colCount)-c0});
+      for (let r=r0;r<Math.min(m.endRowIndex,rowCount);r++) for (let c=c0;c<Math.min(m.endColumnIndex,colCount);c++) if(r!==r0||c!==c0) covered.add(r+':'+c);
+    }
+    const table = el('table'); table.className = 'google-sheet';
+    const cols = el('colgroup'); cols.append(el('col'));
+    for(let c=0;c<colCount;c++) {
+      const col = el('col'), meta = grid.columnMetadata?.[c-colStart] || {};
+      col.style.width = bound(meta.pixelSize,100,20,1000) + 'px';
+      if(meta.hiddenByUser) col.style.visibility = 'collapse';
+      cols.append(col);
+    }
+    table.append(cols); const head = el('thead'), header = el('tr'); header.append(el('th',''));
+    for(let c=0;c<colCount;c++) header.append(el('th',letters(c)));
+    head.append(header); table.append(head); const body = el('tbody');
+    for(let r=0;r<rowCount;r++) {
+      const tr=el('tr'), meta=grid.rowMetadata?.[r-rowStart] || {};
+      tr.style.height=bound(meta.pixelSize,21,14,1000)+'px';
+      if(meta.hiddenByUser || meta.hiddenByFilter) tr.hidden=true;
+      const number=el('th',r+1); number.scope='row'; tr.append(number);
+      for(let c=0;c<colCount;c++) {
+        const key=r+':'+c; if(covered.has(key)) continue;
+        const value=rows[r-rowStart]?.values?.[c-colStart] || {}, cell=el('td');
+        const content=el('div',value.formattedValue ?? ''); cell.append(content);
+        const merge=anchors.get(key); if(merge) {cell.rowSpan=merge.rows;cell.colSpan=merge.cols;}
+        format(cell,value); tr.append(cell);
+      }
+      body.append(tr);
+    }
+    table.append(body); container.replaceChildren(table);
+  }
+  window.QCSheetPreview = {render};
+})();

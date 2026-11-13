@@ -15,3 +15,4 @@ import app.modules.orders.models
 import app.modules.products.models
 import app.modules.production.models
 import app.modules.qc.models
+import app.modules.qc.template_models

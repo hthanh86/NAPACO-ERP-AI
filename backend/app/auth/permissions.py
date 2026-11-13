@@ -15,5 +15,6 @@ PERMISSION_LABELS = {
     'USER_MANAGE': 'Quản lý user', **MASTER_PERMISSIONS,
     'QC_VIEW': 'Xem danh sách và chi tiết QC',
     'QC_CREATE': 'Tạo phiếu QC', 'QC_EDIT': 'Sửa phiếu QC',
+    'QC_TEMPLATE_MANAGE': 'Quản lý Template QC',
 }
 PERMISSION_CODES = set(LEGACY_CONFIG['PERMISSIONS'].values()) | set(PERMISSION_LABELS)

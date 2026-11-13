@@ -7,7 +7,7 @@ Các màn hình nghiệp vụ local giữ nguyên HTML và thao tác của ứng
 1. Mở https://console.cloud.google.com/ bằng tài khoản công ty sẽ quản lý ứng dụng.
 2. Chọn một dự án của công ty nếu có quyền quản trị phù hợp, hoặc chọn **New project** để tạo dự án `Napaco ERP Local`.
 3. Chọn đúng dự án này ở thanh trên cùng.
-4. Vào **APIs & Services → Library**, tìm **Google Drive API**, chọn **Enable**. Chưa cần bật Google Sheets API để chạy MySQL local.
+4. Vào **APIs & Services → Library**, tìm **Google Drive API**, chọn **Enable**. Với chức năng **Quản lý Template QC**, bật thêm **Google Sheets API** trong cùng dự án OAuth.
 
 ## 2. Khai báo ứng dụng
 
@@ -26,6 +26,8 @@ https://www.googleapis.com/auth/drive
 ```
 
 Phạm vi Drive đầy đủ cần để giữ cách tìm mọi file mà người dùng được xem và tạo file trong thư mục Drive hiện có như ứng dụng cũ. Đây là quyền rộng; backend chỉ triển khai thao tác đọc/tìm và tạo file phục vụ PO, không có chức năng xóa tùy ý dữ liệu Drive. Nếu muốn giảm phạm vi xuống những file được chọn riêng, cần đổi sang Google Picker và cách thao tác sẽ khác ứng dụng cũ.
+
+Google Sheets API chấp nhận scope Drive đầy đủ hiện có. Bước 1 quản lý template QC không yêu cầu scope mới; backend chỉ gửi GET đến Drive/Sheets để kiểm tra định dạng file, lấy metadata và đọc vùng giới hạn của tab index 0. Không có thao tác ghi vào spreadsheet gốc. Chia sẻ template với đúng email Google của người quản lý, tối thiểu quyền Viewer. Lỗi 404 của Google có thể là file không tồn tại hoặc file bị ẩn vì thiếu quyền; ERP thông báo cả hai khả năng.
 
 Ứng dụng External ở chế độ Testing có thể yêu cầu kết nối lại sau khi refresh token hết hạn; đây là cấu hình phù hợp để test, chưa phải cấu hình triển khai chính thức.
 

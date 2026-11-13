@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quản lý Template QC · NAPACO ERP</title>
+<link rel="stylesheet" href="/static/auth/users.css"><link rel="stylesheet" href="/static/shared/navigation.css">
+<link rel="stylesheet" href="/static/qc/qc.css"><link rel="stylesheet" href="/static/qc/templates.css">
+<script defer src="/static/shared/navigation.js"></script><script defer src="/static/qc/sheet-preview.js"></script>
+<script defer src="/static/qc/templates.js"></script></head>
+<body><main><h1>Quản lý Template QC</h1>
+<p>Đăng ký và xem trước Google Sheets. Bước 1 chưa đưa template vào luồng Tạo Phiếu QC.</p>
+<div id="message" role="status" aria-live="polite"></div>
+<section><h2>Danh sách template</h2><form id="search" class="actions">
+<label>Mã / tên biểu mẫu<input id="query" maxlength="100" placeholder="QC_NVL_V1"></label>
+<button type="submit">Tra cứu</button><button type="button" id="newTemplate">Thêm template mới</button></form>
+<p id="listHint">Nhấn Tra cứu để tải danh sách đã đăng ký.</p>
+<div class="table-wrap"><table><thead><tr><th>Mã / phiên bản</th><th>Tên biểu mẫu</th><th>CHECK_TYPE</th><th>OBJECT_TYPE</th><th>Sản phẩm</th><th>Spreadsheet ID</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody id="templates"></tbody></table></div>
+<div class="actions"><button id="previous" type="button" disabled>Trang trước</button><span id="pageInfo"></span><button id="next" type="button" disabled>Trang sau</button></div></section>
+<section id="editor"><h2 id="editorTitle">Thêm template mới</h2><form id="templateForm"><div class="grid">
+<label>Mã template<input name="form_code" value="QC_NVL_V1" maxlength="100" pattern="[A-Z][A-Z0-9_]{0,99}" required></label>
+<label>Tên biểu mẫu<input name="form_name" value="Kiểm tra chất lượng nguyên vật liệu" maxlength="300" required></label>
+<label>CHECK_TYPE<select name="check_type"><option>QC NVL</option><option>QC ĐẦU CA</option><option>QC GIỮA CA</option><option>QC CUỐI CA</option></select></label>
+<label>OBJECT_TYPE (tùy chọn)<select name="object_type"><option value="">Tất cả đối tượng phù hợp</option><option>NVL</option><option>SETUP</option><option>HUT</option><option>CAT</option><option>EB</option></select></label>
+<label>Mã sản phẩm (tùy chọn)<input name="product_id" maxlength="100" placeholder="Để trống: áp dụng chung"></label>
+<label>Phiên bản<input name="version" type="number" min="1" max="2147483647" value="1" required></label>
+<label>Trạng thái<select name="status"><option>DRAFT</option><option>INACTIVE</option><option value="ACTIVE" disabled>ACTIVE · giai đoạn sau</option></select></label>
+</div><label>Google Spreadsheet ID hoặc URL<input name="spreadsheet" maxlength="2048" required placeholder="https://docs.google.com/spreadsheets/d/…/edit"></label>
+<p>QC_NVL_V1 áp dụng chung PET, PP, PS, PVC: chọn QC NVL, để trống mã sản phẩm. ERP tự đọc tab index 0; không cần nhập SHEET_GID.</p>
+<div class="actions"><button type="button" id="connection">Kiểm tra kết nối</button><button type="button" id="preview">Xem trước Template</button><button type="submit" id="save">Đăng ký template</button></div>
+<p id="sourceInfo" role="status" aria-live="polite"></p></form></section>
+<section id="previewPanel" hidden><h2>Xem trước Template</h2><p id="previewInfo"></p>
+<p>Chỉ xem nội dung và định dạng cơ bản; công thức hiển thị kết quả do Google tính. Ảnh, biểu đồ, định dạng rich text và bố cục in chưa được mô phỏng.</p>
+<div id="sheetPreview" class="sheet-preview" tabindex="0" aria-label="Bảng xem trước Google Sheets chỉ đọc"></div></section>
+</main></body></html>

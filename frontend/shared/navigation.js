@@ -65,6 +65,7 @@
       if (user.permissions.includes('QC_CREATE')) qcLinks.push(['Tạo Phiếu QC','/qc/create','+']);
       if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Tạo Phiếu NCR/CAPA','/qc/ncr','◇']);
       if (user.permissions.includes('QC_VIEW')) qcLinks.push(['Danh sách QC','/qc/list','▤']);
+      if (user.permissions.includes('QC_TEMPLATE_MANAGE')) qcLinks.push(['Quản lý Template QC','/qc/templates','▦']);
       if (qcLinks.length) {
         const qc = el('details', '', 'erp-submenu'); qc.id = 'erpQcMenu'; qc.open = location.pathname.startsWith('/qc/');
         const summary = el('summary', '', 'erp-module-link erp-submenu-toggle');
