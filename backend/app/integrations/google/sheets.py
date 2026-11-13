@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 from fastapi import HTTPException
 from app.integrations.google.oauth import access_token
+from app.core.performance import measure
 
 MAX_ROWS = 500
 MAX_COLUMNS = 60
@@ -26,6 +27,7 @@ def spreadsheet_id(value):
     raise HTTPException(422, 'Nhập Spreadsheet ID hoặc URL https://docs.google.com/spreadsheets/d/ID hợp lệ.')
 
 
+@measure('google.http_request')
 def read_json(url, token):
     request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token}, method='GET')
     try:

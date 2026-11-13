@@ -48,6 +48,8 @@ class TemplateInput(BaseModel):
 
     @model_validator(mode='after')
     def validate_scope(self):
+        if self.check_type=='QC NVL' and self.product_id:
+            raise ValueError('QC NVL dùng template chung cho tất cả nguyên vật liệu, không giới hạn sản phẩm.')
         if self.status == 'ACTIVE':
             raise ValueError('Phê duyệt mapping rồi dùng thao tác Kích hoạt riêng.')
         if self.object_type:

@@ -56,3 +56,9 @@ def clients():
     outer.rollback();connection.close()
 
 
+
+
+@pytest.fixture(autouse=True)
+def isolated_qc_staging(tmp_path,monkeypatch):
+    from app.modules.qc import jobs
+    monkeypatch.setattr(jobs,'ROOT',tmp_path)

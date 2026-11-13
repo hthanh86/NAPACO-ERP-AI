@@ -72,6 +72,7 @@ class MappedFormInput(BaseModel):
     conclusion: Literal['PASS','FAIL']
     signature: list[Stroke] = Field(default_factory=list, max_length=100)
     confirmation: str | None = Field(default=None, max_length=4096)
+    reuse_signature: bool = False
     _signer: dict | None = PrivateAttr(default=None)
 
     @field_validator('signature')
@@ -98,6 +99,7 @@ class QCInput(BaseModel):
     mapped_form: MappedFormInput | None = None
     parent_folder_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,255}$')
     evidence_manifest: list['UploadInput'] = Field(default_factory=list, max_length=500)
+    staging_id: str | None = Field(default=None,pattern=r'^[0-9a-f-]{36}$')
 
     @field_validator('quantity', mode='before')
     @classmethod

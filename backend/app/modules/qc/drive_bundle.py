@@ -158,8 +158,9 @@ def http(method, url, token, **kwargs):
         raise HTTPException(502, 'Địa chỉ phiên upload Drive không hợp lệ.')
     try:
         with measure('drive.upload_transport', bytes=len(kwargs.get('content') or b''), method=method):
-            response = httpx.request(method, url, headers={'Authorization':'Bearer '+token, **kwargs.pop('headers', {})},
-                                     timeout=120, follow_redirects=False, **kwargs)
+            with measure('google.http_request'):
+                response = httpx.request(method, url, headers={'Authorization':'Bearer '+token, **kwargs.pop('headers', {})},
+                                         timeout=120, follow_redirects=False, **kwargs)
         record('drive.upload_response', 0, ok=response.status_code in (200,201,308), status=response.status_code)
     except httpx.HTTPError:
         raise HTTPException(502, 'Kết nối upload Drive bị gián đoạn. Phiếu đã lưu; hãy thử lại.') from None
@@ -177,13 +178,14 @@ def upload_pdf(token, identifier, content):
 
 
 @measure('drive.prepare_bundle')
-def prepare(db, user, identifier):
+def prepare(db, user, identifier, progress=None):
     obj = locked(db, identifier)
     job = dict((obj.source or {}).get(JOB) or {})
     if not obj.form_data and not (obj.drive_folder_id or job.get('parent')):
         db.commit()
         raise HTTPException(422, 'Phiếu lịch sử chưa có biểu mẫu ERP đã ký.')
     try:
+        if progress:progress('folder')
         token = access_token(db, user)
         if not obj.drive_folder_id:
             in_scope(db, token, job.get('parent') or '', writable=True)
@@ -196,7 +198,8 @@ def prepare(db, user, identifier):
         if existing is None:
             parent = job.get('parent')
             in_scope(db, token, parent or '', writable=True)
-            call(token, method='POST', body={'id':obj.drive_folder_id,'name':obj.id,'mimeType':FOLDER,'parents':[parent]}, fields='id')
+            with measure('drive.create_qc_folder'):
+                call(token, method='POST', body={'id':obj.drive_folder_id,'name':obj.id,'mimeType':FOLDER,'parents':[parent]}, fields='id')
         in_scope(db, token, obj.drive_folder_id, writable=True)
         job.pop('parent', None)
         if not obj.form_data:
@@ -218,7 +221,7 @@ def prepare(db, user, identifier):
             db.commit()
             if obj.template_id:
                 from app.modules.qc.sheets_pdf import render
-                content = render(db, user, obj, token)
+                content = render(db, user, obj, token,progress=progress)
                 obj = locked(db, identifier)
                 job = dict((obj.source or {}).get(JOB) or {})
                 if hashlib.sha256(json.dumps(obj.form_data,sort_keys=True,ensure_ascii=False).encode()).hexdigest()!=revision:
@@ -232,6 +235,7 @@ def prepare(db, user, identifier):
                 call(token, method='POST', body={'id':job['pdf_id'],'name':name,'mimeType':'application/pdf','parents':[obj.drive_folder_id]}, fields='id')
             elif pdf.get('trashed') or obj.drive_folder_id not in pdf.get('parents', []):
                 raise HTTPException(409, 'PDF đã bị di chuyển hoặc xóa. Cần khôi phục file trong thư mục QC trước khi thử lại.')
+            if progress:progress('upload_pdf')
             upload_pdf(token, job['pdf_id'], content)
             job['pdf_revision'] = revision
         job.update(pending=False, error='', step='evidence' if set(job.get('expected_uploads',[]))-set(job.get('completed_uploads',[])) else 'complete')
@@ -251,7 +255,7 @@ def prepare(db, user, identifier):
         message = str(error.detail) if isinstance(error, HTTPException) else 'Chưa xuất/upload được PDF. Hãy thử lại trên phiếu đã lưu.'
         if isinstance(error, ImportError):
             message = 'Chưa cài thư viện PDF cho backend. Cần ReportLab và font DejaVu Sans.'
-        current.update(pending=True, error=message)
+        current.update(pending=True, error=message, error_status=error.status_code if isinstance(error,HTTPException) else 500)
         obj.source = {**(obj.source or {}), JOB:current}
         db.commit()
     pending = bool((obj.source or {}).get(JOB, {}).get('pending'))
@@ -260,7 +264,7 @@ def prepare(db, user, identifier):
 
 
 @measure('drive.start_upload')
-def start_upload(db, user, obj, data):
+def start_upload(db, user, obj, data, file_id=None):
     token = access_token(db, user)
     if not obj.drive_folder_id:
         raise HTTPException(409, 'Hãy thử tạo thư mục bằng chứng trước khi upload.')
@@ -273,7 +277,7 @@ def start_upload(db, user, obj, data):
     if found.get('files'):
         complete_upload(db, obj.id, key)
         return {'complete':True,'offset':data.size}
-    file_id = generated_id(token)
+    file_id = file_id or generated_id(token)
     url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true'
     response = http('POST', url, token, json={'id':file_id,'name':data.name,'parents':[obj.drive_folder_id],
                     'appProperties':{'qc_upload':key}}, headers={'X-Upload-Content-Type':data.mime,

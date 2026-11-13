@@ -112,6 +112,14 @@ def detail_record(db, obj):
     result['evidence_error'] = task.get('error', 'Bằng chứng đang chờ xử lý trên Drive.') if task else ''
     result['evidence_step'] = (task or {}).get('step', '')
     result['pdf_url'] = '/api/qc/' + obj.id + '/pdf' if task and task.get('pdf_revision') and not task.get('pending') else None
+    from app.modules.qc.job_models import QCJob
+    from app.modules.qc.jobs import job_record
+    queued=db.scalar(select(QCJob).where(QCJob.qc_id==obj.id))
+    result['sync']=job_record(queued) if queued else None
+    if queued:
+        result['evidence_pending']=queued.status!='COMPLETED'
+        result['evidence_error']=queued.last_error
+        result['evidence_step']=queued.current_step
     if obj.template_id and not obj.form_data['template']['mapping'].get('signature_cell'):
         from app.modules.qc.template_models import QCTemplate
         current = db.get(QCTemplate, obj.template_id)
@@ -144,7 +152,7 @@ def finish_evidence(db, user, result, batch):
 
 
 def apply_values(db, obj, data, identifier, lsx, user):
-    values = data.model_dump(exclude={'version', 'form', 'mapped_form', 'parent_folder_id', 'evidence_manifest'})
+    values = data.model_dump(exclude={'version', 'form', 'mapped_form', 'parent_folder_id', 'evidence_manifest','staging_id'})
     stamp = values['checked_at']
     values['checked_at'] = stamp.astimezone(TIMEZONE).replace(tzinfo=None) if stamp.tzinfo else stamp
     values['checked_at'] = values['checked_at'].replace(microsecond=0)
@@ -205,6 +213,8 @@ def create_records(db, user, items, request_id, batch=True):
         db.commit()
         return finish_evidence(db, user, result, batch)
     for data in items:
+        if not data.mapped_form or data.form:
+            raise HTTPException(422,'Phiếu QC mới bắt buộc sử dụng duy nhất Google Sheets Template đã duyệt và có hiệu lực.')
         if data.mapped_form and (data.form or data.image_url):
             raise HTTPException(422, 'Không trộn form cũ hoặc liên kết bằng chứng với hồ sơ template mới.')
         if data.check_type == 'QC NVL' and not data.form and not data.mapped_form:
@@ -212,8 +222,8 @@ def create_records(db, user, items, request_id, batch=True):
         if data.form or data.mapped_form:
             if not data.parent_folder_id:
                 raise HTTPException(422, 'Hãy chọn thư mục cha cho hồ sơ QC.')
-            token = drive_bundle.access_token(db, user)
-            drive_bundle.in_scope(db, token, data.parent_folder_id, writable=True)
+            # Scope/write permission is checked again by the worker before any Drive write.
+            # Reception performs no remote Drive work while the MySQL transaction is open.
     evidence_ids = [ref[0] for item in items if item.image_url and (ref := evidence.reference(item.image_url))]
     if len(evidence_ids) != len(set(evidence_ids)):
         raise HTTPException(422, 'Mỗi phiếu trong lô cần file hoặc thư mục bằng chứng Drive riêng; không dùng trùng liên kết.')
@@ -242,6 +252,8 @@ def create_records(db, user, items, request_id, batch=True):
             evidence.schedule(obj, user)
         db.add(obj)
         db.flush()
+        from app.modules.qc.jobs import enqueue
+        enqueue(db,user,obj,data.staging_id,data.evidence_manifest)
         results.append({**record(obj), 'staff_name':user.name, 'evidence':obj.image_url,
                         'evidence_pending':bool((obj.source or {}).get(evidence.TASK) or (obj.source or {}).get(drive_bundle.JOB)), 'evidence_error':''})
         db.add(Audit(user_id=user.id, action='QC_CREATE', entity_id=obj.id,
@@ -260,6 +272,10 @@ def update(db, user, identifier, data):
     obj = db.scalar(select(QualityCheck).where(QualityCheck.id == identifier).with_for_update())
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
+    from app.modules.qc.job_models import QCJob
+    pending=db.scalar(select(QCJob).where(QCJob.qc_id==identifier).with_for_update())
+    if pending and pending.status in {'PENDING','PROCESSING'}:
+        raise HTTPException(409,'Hồ sơ đang chờ/được worker xử lý. Hãy chờ hoàn tất trước khi sửa và ký lại.')
     if bool(obj.template_id) != bool(data.mapped_form):
         raise HTTPException(409, 'Không chuyển đổi giữa hồ sơ cũ và hồ sơ template.')
     if obj.template_id and (data.object_id != obj.object_id or data.object_type != obj.object_type or data.check_type != obj.check_type):
@@ -278,6 +294,9 @@ def update(db, user, identifier, data):
     else:
         evidence.schedule(obj, user)
     db.flush()
+    if data.mapped_form:
+        from app.modules.qc.jobs import enqueue
+        enqueue(db,user,obj,data.staging_id,data.evidence_manifest)
     db.add(Audit(user_id=user.id, action='QC_EDIT', entity_id=obj.id, details={
         'object_type':obj.object_type,'object_id':obj.object_id,
         'previous_signing_hash':previous_signer.get('content_hash'),

@@ -98,7 +98,10 @@ def writable_record(db, user, identifier):
 
 @router.post('/api/qc/{identifier}/bundle')
 def prepare_bundle(identifier: str, user=Depends(current_user), db=Depends(get_db)):
-    writable_record(db, user, identifier)
+    obj=writable_record(db, user, identifier)
+    from app.modules.qc.job_models import QCJob
+    if db.scalar(select(QCJob.id).where(QCJob.qc_id==identifier)):
+        return service.detail_record(db,obj)
     return service.detail_record(db, drive_bundle.prepare(db, user, identifier))
 
 
@@ -128,11 +131,17 @@ def download_pdf(identifier: str, user=Depends(current_user), db=Depends(get_db)
 
 @router.post('/api/qc/{identifier}/uploads')
 def start_upload(identifier: str, data: UploadInput, user=Depends(current_user), db=Depends(get_db)):
+    from app.modules.qc.job_models import QCJob
+    if db.scalar(select(QCJob.id).where(QCJob.qc_id==identifier)):
+        raise HTTPException(409,'Hồ sơ nền nhận bằng chứng qua staging; không upload trực tiếp từ tab.')
     return drive_bundle.start_upload(db, user, writable_record(db, user, identifier), data)
 
 
 @router.post('/api/qc/{identifier}/evidence-plan')
 def plan_evidence(identifier: str, files: list[UploadInput], parent_folder_id: str | None = Query(None,pattern=r'^[A-Za-z0-9_-]{1,255}$'), user=Depends(current_user), db=Depends(get_db)):
+    from app.modules.qc.job_models import QCJob
+    if db.scalar(select(QCJob.id).where(QCJob.qc_id==identifier)):
+        raise HTTPException(409,'Hồ sơ nền nhận bằng chứng qua staging và queue-evidence.')
     from app.modules.qc.evidence import reference, locked
     obj=writable_record(db,user,identifier)
     if len(files)>500:
@@ -159,6 +168,9 @@ async def upload_chunk(identifier: str, request: Request, upload_ticket: str = H
                        offset: int = Query(0, ge=0), probe: bool = False,
                        user=Depends(current_user), db=Depends(get_db)):
     obj = writable_record(db, user, identifier)
+    from app.modules.qc.job_models import QCJob
+    if db.scalar(select(QCJob.id).where(QCJob.qc_id==identifier)):
+        raise HTTPException(409,'Worker đang quản lý upload của hồ sơ nền.')
     content = bytearray()
     async for chunk in request.stream():
         content.extend(chunk)
@@ -191,11 +203,14 @@ def listing(q: str = Query('', max_length=100), check_type: CheckType | None = N
     # Omit long notes, images and source JSON from the paginated list.
     fields = ['id', 'checked_at', 'check_type', 'object_type', 'object_id', 'production_order_id',
               'quantity', 'result', 'staff_id', 'standard_url', 'drive_folder_id']
+    from app.modules.qc.job_models import QCJob
     rows = db.execute(select(*[getattr(QualityCheck, key) for key in fields],
+                             QCJob.status.label('sync_status'),QCJob.current_step.label('sync_step'),
+                             QCJob.last_error.label('sync_error'),QCJob.attempts.label('sync_attempts'),
                              User.name.label('staff_name'), QualityCheck.image_url.label('evidence'),
                              func.json_contains_path(QualityCheck.source, 'one', '$.qc_evidence_task').label('legacy_pending'),
                              QualityCheck.source[drive_bundle.JOB]['pending'].as_boolean().label('bundle_pending'))
-                      .outerjoin(User, User.id == QualityCheck.staff_id).where(*conditions)
+                      .outerjoin(User, User.id == QualityCheck.staff_id).outerjoin(QCJob,QCJob.qc_id==QualityCheck.id).where(*conditions)
                       .order_by(QualityCheck.checked_at.desc(), QualityCheck.id.desc()).offset((page-1)*size).limit(size)).mappings().all()
     items = [dict(row) for row in rows]
     for item in items:
@@ -203,6 +218,8 @@ def listing(q: str = Query('', max_length=100), check_type: CheckType | None = N
             item['evidence'] = 'https://drive.google.com/drive/folders/'+item['drive_folder_id']
         legacy_pending, bundle_pending = item.pop('legacy_pending'), item.pop('bundle_pending')
         item['evidence_pending'] = bool(legacy_pending or bundle_pending)
+        if item['sync_status']:
+            item['evidence_pending']=item['sync_status']!='COMPLETED'
         item['staff_name'] = item['staff_name'] or 'Chưa xác định'
         if item['quantity'] is not None:
             item['quantity'] = format(item['quantity'], '.8f')

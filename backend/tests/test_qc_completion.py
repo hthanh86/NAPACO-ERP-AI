@@ -39,6 +39,9 @@ def test_save_signature_view_and_edit_requires_new_confirmation(clients,monkeypa
     saved=create(admin,data)
     assert saved.status_code==201,saved.text
     saved=saved.json()
+    from app.modules.qc.job_models import QCJob
+    from sqlalchemy import update
+    conn.execute(update(QCJob).where(QCJob.qc_id==saved['id']).values(status='COMPLETED'))
     assert saved['form_data']['input']['signature'] and saved['form_data']['signer']['content_hash']
     assert saved['evidence_pending'] and saved['pdf_pending']
     assert admin.get('/api/qc/'+saved['id']).json()['form_data']['signer']==saved['form_data']['signer']
@@ -57,6 +60,9 @@ def test_manifest_status_is_durable_and_duplicate_completion_idempotent(clients,
     admin,_,conn=clients
     row,_,_=stage(admin,monkeypatch);selection=nvl(conn)
     data=qc_payload(row,selection);data['evidence_manifest']=[{'name':'test.png','size':100,'modified':1,'mime':'image/png'}]
+    staging=admin.post('/api/qc/staging',json={'files':data['evidence_manifest']}).json()
+    assert admin.put('/api/qc/staging/'+staging['id']+'/'+staging['files'][0]['id']+'?offset=0',content=b'x'*100).status_code==200
+    data['staging_id']=staging['id']
     saved=create(admin,data)
     assert saved.status_code==201,saved.text
     saved=saved.json();identifier=saved['id']
@@ -75,7 +81,7 @@ def test_manifest_status_is_durable_and_duplicate_completion_idempotent(clients,
     finally:
         override.close()
     detail=admin.get('/api/qc/'+identifier).json()
-    assert detail['evidence_remaining']==0 and not detail['evidence_pending']
+    assert detail['evidence_remaining']==0 and detail['evidence_pending']  # Worker verification gates COMPLETED.
 
 
 def test_signature_region_cannot_overlap_results():
@@ -144,3 +150,43 @@ def test_sheets_copy_batch_write_readback_never_writes_original(monkeypatch):
     assert len(writes)==1
     assert sum('updateCells' in request for request in writes[0]['requests'])==len(values)
     assert source['grid']['rowData'][1]['values'][1]['formattedValue']=='Theo PO'
+
+
+def test_edit_reuses_own_strokes_and_reconfirms_latest_content(clients,monkeypatch):
+    from app.modules.qc.job_models import QCJob
+    from sqlalchemy import update
+    admin,_,conn=clients;row,_,_=stage(admin,monkeypatch);data=qc_payload(row,nvl(conn))
+    saved=create(admin,data);assert saved.status_code==201,saved.text
+    saved=saved.json();conn.execute(update(QCJob).where(QCJob.qc_id==saved['id']).values(status='COMPLETED'))
+    changed={**deepcopy(data),'version':saved['version'],'note':'Đã cập nhật sau khi ký','quantity':'3'}
+    changed['mapped_form'].update(signature=saved['form_data']['input']['signature'],reuse_signature=True)
+    response=admin.post('/api/qc/signatures/confirm?qc_id='+saved['id'],json=changed)
+    assert response.status_code==200,response.text
+    changed['mapped_form']['confirmation']=response.json()['confirmation']
+    updated=admin.put('/api/qc/'+saved['id'],json=changed)
+    assert updated.status_code==200,updated.text
+    current=updated.json()['form_data']
+    assert current['input']['signature']==saved['form_data']['input']['signature']
+    assert current['signer']['method']=='google_oauth_internal_reconfirmed'
+    assert current['signer']['previous_content_hash']==saved['form_data']['signer']['content_hash']
+    assert current['signer']['signature_origin_signed_at']==saved['form_data']['signer']['signed_at']
+    assert current['signer']['content_hash']!=saved['form_data']['signer']['content_hash']
+    assert current['context']['quantity']=='3' and current['context']['qc_note']==changed['note']
+
+
+@pytest.mark.parametrize('mismatch',['user_id','google_subject','signature'])
+def test_cannot_reuse_another_identity_or_different_strokes(clients,monkeypatch,mismatch):
+    from app.modules.qc.models import QualityCheck
+    from app.main import app
+    from app.core.database import get_db
+    admin,_,conn=clients;row,_,_=stage(admin,monkeypatch);data=qc_payload(row,nvl(conn))
+    saved=create(admin,data);assert saved.status_code==201,saved.text
+    saved=saved.json();data['mapped_form'].update(signature=saved['form_data']['input']['signature'],reuse_signature=True)
+    provider=app.dependency_overrides[get_db]();db=next(provider)
+    try:
+        obj=db.get(QualityCheck,saved['id']);value=deepcopy(obj.form_data)
+        if mismatch=='signature':data['mapped_form']['signature']=[[[.2,.2],[.9,.9]]]
+        else:value['signer'][mismatch]='other-identity';obj.form_data=value;db.commit()
+    finally:provider.close()
+    response=admin.post('/api/qc/signatures/confirm?qc_id='+saved['id'],json=data)
+    assert response.status_code==403,response.text

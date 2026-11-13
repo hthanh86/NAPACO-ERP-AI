@@ -16,3 +16,4 @@ import app.modules.products.models
 import app.modules.production.models
 import app.modules.qc.models
 import app.modules.qc.template_models
+import app.modules.qc.job_models

@@ -62,7 +62,30 @@ def applicable(row, check_type, object_type, product_ids):
             (row.product_id is None or row.product_id in product_ids))
 
 
+def resolve_template(db, check_type, object_type, product_ids, lock=False):
+    statement=select(QCTemplate).where(QCTemplate.status=='ACTIVE',QCTemplate.approved_at.is_not(None),
+        QCTemplate.source_matches.is_(True),QCTemplate.check_type==check_type,
+        or_(QCTemplate.object_type.is_(None),QCTemplate.object_type==object_type),
+        or_(QCTemplate.product_id.is_(None),QCTemplate.product_id.in_(product_ids)))
+    rows=db.scalars(statement.with_for_update() if lock else statement).all()
+    if check_type=='QC NVL':
+        rows=[row for row in rows if row.product_id is None]
+    winners=set()
+    for product in (product_ids if check_type!='QC NVL' and product_ids else {None}):
+        matching=[r for r in rows if r.product_id is None or r.product_id==product]
+        if not matching:raise HTTPException(422,'Chưa có Google Sheets Template đã duyệt và có hiệu lực phù hợp. Không thể tạo QC.')
+        priority=lambda r:(False,False) if check_type=='QC NVL' else (r.product_id is not None,r.object_type is not None)
+        highest=max(priority(r) for r in matching)
+        selected=[r for r in matching if priority(r)==highest]
+        if len(selected)!=1:raise HTTPException(409,'Nhiều template QC cùng mức ưu tiên. Quản lý cần điều chỉnh để chỉ còn một template có hiệu lực.')
+        winners.add(selected[0].id)
+    if len(winners)!=1:raise HTTPException(409,'Các sản phẩm của đối tượng đang dùng template khác nhau. Cần quản lý cấu hình một template chung phù hợp.')
+    return next(r for r in rows if r.id in winners)
+
+
 def released(db, identifier, check_type, object_type, product_ids, lock=False):
+    winner=resolve_template(db,check_type,object_type,product_ids,lock)
+    if winner.id!=identifier:raise HTTPException(422,'Template được gửi không phải template ưu tiên đang áp dụng. Hãy tải lại đối tượng QC.')
     statement = select(QCTemplate).where(QCTemplate.id == identifier).execution_options(populate_existing=True)
     row = db.scalar(statement.with_for_update() if lock else statement)
     if (not row or row.status != 'ACTIVE' or not row.approved_at or row.source_matches is not True or
@@ -118,7 +141,7 @@ def filled(db, user, data, qc_id, lsx, existing=None):
         raise HTTPException(403, 'Chưa có xác nhận chữ ký hợp lệ từ phiên Google hiện tại.')
     from app.modules.qc.signing import context_hash
     if entered._signer.get('context_hash')!=context_hash(values):
-        raise HTTPException(409,'Thông tin NVL/PO đã thay đổi sau khi ký. Hãy tải lại và ký lại trước khi lưu.')
+        raise HTTPException(409,'Thông tin NVL/PO đã thay đổi sau khi xác nhận. Hãy tải lại và xác nhận nội dung trước khi lưu.')
     if not definition['mapping'].get('signature_cell'):
         raise HTTPException(422, 'Quản lý cần xác định và phê duyệt vị trí chữ ký trên template trước khi lưu.')
     fields = definition['mapping']['fields']
@@ -180,12 +203,8 @@ def selection(db, check_type, object_type, object_id):
 def options(check_type: CheckType, object_type: ObjectType, object_id: str,
             user=Depends(editor_user), db=Depends(get_db)):
     _, product_ids = selection(db, check_type, object_type, object_id)
-    rows = db.scalars(select(QCTemplate).where(QCTemplate.status == 'ACTIVE',
-        QCTemplate.approved_at.is_not(None), QCTemplate.source_matches.is_(True),
-        QCTemplate.check_type == check_type, or_(QCTemplate.object_type.is_(None),QCTemplate.object_type == object_type),
-        or_(QCTemplate.product_id.is_(None), QCTemplate.product_id.in_(product_ids)))
-        .order_by(QCTemplate.version.desc(), QCTemplate.form_code).limit(100)).all()
-    return {'items':[{'id':row.id,'code':row.form_code,'name':row.form_name,'version':row.version} for row in rows]}
+    row=resolve_template(db,check_type,object_type,product_ids)
+    return {'items':[{'id':row.id,'code':row.form_code,'name':row.form_name,'version':row.version}]}
 
 
 @router.get('/api/qc/templates/{identifier}/entry')

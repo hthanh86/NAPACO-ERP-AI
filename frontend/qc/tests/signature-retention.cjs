@@ -1,0 +1,26 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const nodes=new Map();
+const node=()=>({value:'',hidden:false,disabled:false,textContent:'',replaceChildren(...children){this.children=children;}});
+global.document={getElementById(id){if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);},createElement:()=>node()};
+const original=[[[.1,.2],[.8,.7]]];
+const legacy={async init(){},reset(){},evidenceRecord(){},payload(){return {form:null,parent_folder_id:'parent',evidence_manifest:[]};},busy(){return false;},files(){return [];}};
+global.window={QCFormUI:legacy,NAPACO_USER:{id:'owner',permissions:['QC_EDIT']},addEventListener(){}};
+const fields={check_type:'QC NVL',object_type:'NVL',object_id:'NVL_TEST',quantity:'3',result:'OK',checked_at:'2026-11-13T10:00:00',note:'New note'};
+global.FormData=class{[Symbol.iterator](){return Object.entries(fields)[Symbol.iterator]();}};
+const requests=[];global.fetch=async(url,options)=>{requests.push(JSON.parse(options.body));return {ok:true,json:async()=>({confirmation:'fresh-'+requests.length})};};
+vm.runInThisContext(fs.readFileSync('/app/frontend/qc/mapped-forms.js','utf8'));
+(async()=>{
+ await window.QCFormUI.init();
+ const entry={id:'template',code:'QC_V1',version:1,name:'QC',mapping:{signature_cell:'A20'},snapshot:{},source_hash:'a'.repeat(64),mapping_hash:'b'.repeat(64)};
+ window.QCFormUI.load({id:'QC_TEST',template_id:entry.id,form_data:{template:entry,context:{},input:{answers:[{id:'width',actual:'500',assessment:'PASS'}],conclusion:'PASS',signature:structuredClone(original)},signer:{user_id:'owner'}}},false);
+ window.QCFormUI.invalidate();
+ await window.QCFormUI.prepare();
+ assert.deepEqual(requests[0].mapped_form.signature,original);
+ assert.equal(requests[0].mapped_form.reuse_signature,true);
+ assert.equal(requests[0].quantity,'3');assert.equal(requests[0].note,'New note');
+ assert.equal(window.QCFormUI.payload().mapped_form.confirmation,'fresh-1');
+ fields.note='Another edit';window.QCFormUI.invalidate();await window.QCFormUI.prepare();
+ assert.deepEqual(window.QCFormUI.payload().mapped_form.signature,original);
+ assert.equal(requests[1].note,'Another edit');assert.equal(window.QCFormUI.payload().mapped_form.confirmation,'fresh-2');
+ console.log('Signature retention: header edits keep strokes; Save reconfirms latest content without redrawing');
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -10,6 +10,7 @@ from app.integrations.google.oauth import cipher
 from app.integrations.google.models import GoogleCredential
 from app.modules.qc.mapping import digest
 from app.modules.qc.schemas import QCInput
+from app.core.performance import measure
 
 router = APIRouter()
 
@@ -30,6 +31,7 @@ def identity(request, db, user):
 def content_hash(data):
     values = data.model_dump(mode='json', include={'check_type','object_type','object_id','checked_at','quantity','result','note','mapped_form'})
     values['mapped_form'].pop('confirmation', None)
+    if not values['mapped_form'].get('reuse_signature'):values['mapped_form'].pop('reuse_signature',None)
     return digest(values)
 
 
@@ -38,6 +40,7 @@ def context_hash(values):
         'qc_id','check_type','checked_at','quantity','staff_name','qc_note','conclusion','signer_name','signed_at'}})
 
 
+@measure('qc.signature.validate')
 def verify(request, db, user, data):
     if not data.mapped_form:
         return
@@ -49,7 +52,7 @@ def verify(request, db, user, data):
                 signed['google_subject'] != actor['google_subject'] or signed['content_hash'] != content_hash(data)):
             raise ValueError()
     except (InvalidToken, ValueError, KeyError, TypeError):
-        raise HTTPException(422, 'Nội dung QC hoặc phiên ký đã thay đổi. Hãy mở biểu mẫu và ký xác nhận lại.') from None
+        raise HTTPException(422, 'Nội dung hoặc phiên xác nhận đã thay đổi. Hãy xác nhận nội dung bằng tài khoản Google hiện tại.') from None
     entered._signer = signed
 
 
@@ -60,17 +63,27 @@ def confirm(data: QCInput, request: Request, qc_id: str | None = Query(None,max_
     actor = identity(request, db, user)
     if not data.mapped_form or not any(len(stroke) >= 2 and len(set(map(tuple, stroke))) >= 2 for stroke in data.mapped_form.signature):
         raise HTTPException(422, 'Hãy ký xác nhận; chữ ký không được để trống hoặc chỉ có một điểm.')
+    previous=None
     if qc_id:
         require(db,user,'QC_EDIT')
         from app.modules.qc.models import QualityCheck
         obj=db.get(QualityCheck,qc_id)
         if not obj or obj.template_id!=data.mapped_form.template_id or obj.object_id!=data.object_id:
             raise HTTPException(422,'Phiếu và nội dung đang ký không khớp.')
+        previous=obj.form_data.get('signer') or {}
+        if data.mapped_form.reuse_signature and (previous.get('user_id')!=user.id or
+                previous.get('google_subject')!=actor['google_subject'] or
+                obj.form_data['input']['signature']!=data.mapped_form.model_dump(mode='json')['signature']):
+            raise HTTPException(403,'Chỉ được dùng lại nét ký của chính tài khoản Google đã ký phiếu này. Hãy ký chữ ký mới.')
         values=obj.form_data['context']
     else:
+        if data.mapped_form.reuse_signature:raise HTTPException(422,'Chỉ dùng lại chữ ký đã lưu trên chính phiếu đang sửa.')
         from app.modules.qc.template_runtime import selection
         values,_=selection(db,data.check_type,data.object_type,data.object_id)
     signed = {**actor,'signed_at':datetime.now(timezone.utc).isoformat(),'nonce':uuid4().hex,
               'method':'google_oauth_internal_drawn','content_hash':content_hash(data),'context_hash':context_hash(values)}
+    if data.mapped_form.reuse_signature:
+        signed.update(method='google_oauth_internal_reconfirmed',signature_origin_signed_at=previous.get('signature_origin_signed_at') or previous.get('signed_at'),
+            previous_content_hash=previous.get('content_hash'))
     token = cipher().encrypt(json.dumps(signed).encode()).decode()
     return {'confirmation':token,'name':actor['name'],'email':actor['email'],'signed_at':signed['signed_at']}

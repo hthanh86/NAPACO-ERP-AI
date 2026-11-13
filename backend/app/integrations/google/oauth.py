@@ -34,6 +34,7 @@ def cipher():
 
 
 @measure('google.json')
+@measure('google.http_request')
 def google_json(url,form=None,token=None,body=None,method=None,headers=None,allow_not_found=False):
     extra=dict(headers or {})
     if form is not None:

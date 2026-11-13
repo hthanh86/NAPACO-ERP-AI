@@ -20,7 +20,8 @@ services:
       timeout: 3s
       retries: 30
       start_period: 30s
-  backend:
+  backend: &qc_backend
+    image: napaco-local-backend
     build: ./backend
     env_file:
       - path: .google.env
@@ -42,5 +43,19 @@ services:
       - ./frontend:/app/frontend:ro
       - ./data:/app/data:ro
       - ./reports:/app/reports
+      - qc_staging:/var/lib/napaco/qc-staging
+  qc-worker:
+    <<: *qc_backend
+    container_name: napaco-qc-worker
+    ports: []
+    command: ["python", "-m", "app.modules.qc.worker"]
+    stop_grace_period: 150s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time; assert time.time()-os.path.getmtime('/tmp/qc-worker-heartbeat')<240"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
 volumes:
   mysql84_data:
+  qc_staging:

@@ -3,6 +3,7 @@
   const $=id=>document.getElementById(id);
   const el=(tag,text)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;return node;};
   let catalog=[],rootFolder='',state={form:null,parent:null,files:[]},record=null,readonly=false,working=false,uploads=[];
+  let staging=null;
   const business=()=> $('checkType').value==='QC NVL'?'NVL':'PRODUCT';
   function activeDefinition(){const saved=record?.form_data?.definition;return saved&&(saved.business||'NVL')===business()?saved:catalog.find(item=>item.business===business());}
   async function api(url,options={}){
@@ -26,14 +27,15 @@
     $('chooseFolder').disabled=readonly||!!record?.drive_folder_id||!rootFolder;
     $('chooseForm').disabled=!activeDefinition();
     if(!state.form&&!activeDefinition())$('formSummary').textContent='Nghiệp vụ này chưa có template QC đang ban hành.';
-    $('fileSummary').replaceChildren(...state.files.map((entry,index)=>{const row=el('li',entry.file.name+' · '+(entry.file.size/1024/1024).toFixed(1)+' MB');
-      const remove=button('Bỏ file',()=>{if(!working){state.files.splice(index,1);summary();}});remove.disabled=working;row.append(remove);return row;}));
+    $('fileSummary').replaceChildren(...state.files.map(entry=>{const row=el('li',entry.file.name+' · '+(entry.file.size/1024/1024).toFixed(1)+' MB · staging '+Math.round((entry.stageOffset||0)/Math.max(entry.file.size,1)*100)+'%');
+      const remove=button('Bỏ file',()=>{if(!working){staging?.remove(entry);state.files=state.files.filter(item=>item!==entry);if(!state.files.length){staging?.stop();staging=null;}summary();}});remove.disabled=working;row.append(remove);return row;}));
+    if(staging){const note=el('li',staging.error|| (staging.done?'Đã tiếp nhận an toàn. Có thể lưu phiếu và đóng tab sau khi nhận QC_ID.':'Đang tiếp nhận file vào staging…'));if(staging.error)note.append(button('Thử lại staging',()=>staging.run()));$('fileSummary').append(note);}
     $('downloadFormPdf').hidden=record?.template_id?!record.pdf_url:!record?.form_data;
     if(record?.form_data)$('downloadFormPdf').href='/api/qc/'+encodeURIComponent(record.id)+'/pdf';
     const canAppend=!!record&&(window.NAPACO_USER?.permissions.includes('QC_EDIT')||record.staff_id===window.NAPACO_USER?.id&&window.NAPACO_USER?.permissions.includes('QC_CREATE'));
     $('evidenceFiles').disabled=working||!!record&&!canAppend;
     $('saveEvidence').hidden=!canAppend;
-    $('evidenceStatus').textContent=record?(record.evidence_pending?'Hồ sơ chưa hoàn tất · '+(record.evidence_step||'đang chờ')+' · '+(record.evidence_error||''):'Hồ sơ đã hoàn tất các file được đăng ký.') : '';
+    $('evidenceStatus').textContent=record?.sync?record.sync.status+' · '+record.sync.step+' · '+(record.sync.error||''):record?(record.evidence_pending?'Hồ sơ chưa hoàn tất · '+(record.evidence_step||'đang chờ')+' · '+(record.evidence_error||''):'Hồ sơ đã hoàn tất các file được đăng ký.') : '';
   }
   function editForm(){
     const definition=activeDefinition();
@@ -84,24 +86,7 @@
     }));}modal.append(error);
   }
   async function chooseFolder(){
-    const modal=dialog('Chọn thư mục cha cho hồ sơ QC'),area=el('div'),error=el('p');error.className='error';modal.append(area,error);
-    let epoch=0;
-    async function load(identifier='',pageToken='',append=false){
-      const current=++epoch;error.textContent='Đang tải…';
-      try{
-        const params=new URLSearchParams();if(identifier)params.set('folder_id',identifier);if(pageToken)params.set('page_token',pageToken);
-        const data=await api('/api/qc/folders?'+params);if(current!==epoch||!modal.open)return;error.textContent='';
-        if(!append){area.replaceChildren(el('h3',data.current.name));
-          const breadcrumb=el('nav');breadcrumb.setAttribute('aria-label','Đường dẫn thư mục QC');
-          for(const part of data.breadcrumb||[])breadcrumb.append(button(part.name,()=>load(part.id)));area.append(breadcrumb);
-          if(data.parent_id)area.append(button('Lên thư mục cha',()=>load(data.parent_id)));
-          area.append(button('Chọn thư mục này',()=>{state.parent=data.current;summary();modal.close();}));}
-        for(const item of data.items)area.append(button('📁 '+item.name,()=>load(item.id)));
-        if(data.next_page_token)area.append(button('Xem thêm',event=>{event.currentTarget.remove();load(data.current.id,data.next_page_token,true);}));
-      }catch(reason){if(current===epoch)error.textContent=reason.message;}
-    }
-    // No folder_id on first request: backend starts at the current configured QC root.
-    load();
+    window.QCDrivePicker.open({api,root:rootFolder,onSelect:folder=>{state.parent=folder;summary();}});
   }
   async function transfer(entry,id,status){
     if(entry.complete)return;
@@ -137,20 +122,21 @@
   }
   window.QCFormUI={
     async init(){const config=await api('/api/qc/forms');catalog=config.items;rootFolder=config.root_folder_id;$('chooseForm').onclick=editForm;$('chooseFolder').onclick=chooseFolder;
-      $('evidenceFiles').onchange=()=>{if(working)return;state.files=[...$('evidenceFiles').files].map(file=>({file,offset:0,complete:false}));summary();};
+      $('evidenceFiles').onchange=()=>{if(working)return;staging?.stop();state.files=[...$('evidenceFiles').files].map(file=>({file,offset:0,complete:false}));staging=state.files.length?new window.QCStaging(state.files,summary):null;summary();};
       $('saveEvidence').onclick=async()=>{if(!record||working)return;try{
         const manifest=state.files.map(e=>({name:e.file.name,size:e.file.size,modified:e.file.lastModified,mime:e.file.type||'application/octet-stream'}));
-        record=await api('/api/qc/'+encodeURIComponent(record.id)+'/evidence-plan'+(state.parent?'?parent_folder_id='+encodeURIComponent(state.parent.id):''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(manifest)});
-        await uploadRecords([record],[state.files],()=>{state.files=[];summary();});
+        if(!staging){if(record.sync){await api('/api/qc/'+encodeURIComponent(record.id)+'/retry-sync',{method:'POST'});$('evidenceStatus').textContent='PENDING · Đã yêu cầu worker thử lại.';return;}throw Error('Hãy chọn file để tiếp nhận staging trước.');}
+        record=await api('/api/qc/'+encodeURIComponent(record.id)+'/queue-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({staging_id:staging.payload(),files:manifest,parent_folder_id:state.parent?.id||null})});
+        state.files=[];staging=null;summary();window.dispatchEvent(new CustomEvent('qc-evidence-updated',{detail:record}));
       }catch(error){$('formError').textContent=error.message;}};
     },
-    reset(){state={form:null,parent:null,files:[]};record=null;readonly=false;summary();const panel=$('qcUploadPanel');if(panel)panel.hidden=true;},
+    reset(){staging?.stop();staging=null;state={form:null,parent:null,files:[]};record=null;readonly=false;summary();const panel=$('qcUploadPanel');if(panel)panel.hidden=true;},
     load(item,viewOnly){record=item;readonly=viewOnly;state={form:item.form_data?structuredClone(item.form_data.input):null,parent:null,files:[]};$('evidenceFiles').disabled=viewOnly;summary();},
-    payload(){return {form:state.form,parent_folder_id:state.parent?.id||null,evidence_manifest:state.files.map(e=>({name:e.file.name,size:e.file.size,modified:e.file.lastModified,mime:e.file.type||'application/octet-stream'}))};},
+    payload(){return {form:state.form,parent_folder_id:state.parent?.id||null,staging_id:staging?.payload()||null,evidence_manifest:state.files.map(e=>({name:e.file.name,size:e.file.size,modified:e.file.lastModified,mime:e.file.type||'application/octet-stream'}))};},
     files(){return state.files;},uploadRecords,
     evidenceRecord(item){record=item;state.form=null;summary();},
     manifest(){return state.files.map(e=>({name:e.file.name,size:e.file.size,modified:e.file.lastModified,mime:e.file.type||'application/octet-stream'}));},
-    busy(){return working||uploads.length>0;},
+    busy(){return working||uploads.length>0||!!staging?.uploading;},
     invalidate(discard=false){if(state.form){if(discard){state.form=null;$('standardUrl').value='';}else state.form.signature=[];}summary();}
   };
 })();

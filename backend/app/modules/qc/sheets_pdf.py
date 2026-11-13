@@ -33,7 +33,8 @@ def export(token, identifier, gid, rows, columns):
     try:
         with httpx.Client(timeout=60,follow_redirects=False) as client:
             for _ in range(4):
-                response=client.get(url,headers=headers)
+                with measure('google.http_request'):
+                    response=client.get(url,headers=headers)
                 if response.status_code not in {301,302,303,307,308}:break
                 url=response.headers.get('location','');host=urlsplit(url)
                 if host.scheme!='https' or not (host.hostname=='docs.google.com' or (host.hostname or '').endswith('.googleusercontent.com')):
@@ -47,7 +48,7 @@ def export(token, identifier, gid, rows, columns):
 
 
 @measure('sheets.render_total')
-def render(db,user,obj,token):
+def render(db,user,obj,token,progress=None):
     from app.modules.qc.drive_bundle import JOB,call
     saved=deepcopy(obj.form_data);definition=saved['template'];layout=definition['mapping'];snap=definition['snapshot']
     if not saved.get('signer') or not saved['input'].get('signature') or not layout.get('signature_cell'):
@@ -60,6 +61,7 @@ def render(db,user,obj,token):
     key=hashlib.sha256((obj.id+revision).encode()).hexdigest()
     temporary=job.get('temp_copy_id') if job.get('temp_revision')==revision else None
     if not temporary:
+        if progress:progress('copy_template')
         with measure('sheets.copy_template'):
             found=call(token,q=f"'{obj.drive_folder_id}' in parents and trashed=false and appProperties has {{ key='qc_temp' and value='{key}' }}",fields='files(id)',pageSize=10,includeItemsFromAllDrives='true')
             if found.get('files'):temporary=found['files'][0]['id']
@@ -105,6 +107,7 @@ def render(db,user,obj,token):
     requests.append({'repeatCell':{'range':area,'cell':{'userEnteredValue':{'stringValue':''},
         'userEnteredFormat':{'backgroundColor':dict(zip(['red','green','blue'],marker))}},
         'fields':'userEnteredValue,userEnteredFormat.backgroundColor'}})
+    if progress:progress('mapping')
     with measure('sheets.batch_mapping'):
         google_json(base+':batchUpdate',token=token,method='POST',body=json.dumps({'requests':requests}).encode(),headers={'Content-Type':'application/json'})
     ranges=["'"+copied['sheet_title'].replace("'","''")+"'!"+cell for cell in values]
@@ -120,8 +123,10 @@ def render(db,user,obj,token):
     obj=persist(db,obj.id,expected_revision=revision,step='export')
     # Export the full approved grid, including logos/drawings anchored beyond text cells.
     last_row=snap['row_count'];last_col=snap['column_count']
+    if progress:progress('export_pdf')
     content=export(token,temporary,gid,last_row,last_col)
     from app.modules.qc.pdf_signature import apply_signature
+    if progress:progress('signature_pdf')
     return apply_signature(content,saved,marker,background)
 
 

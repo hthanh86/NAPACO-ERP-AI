@@ -5,6 +5,7 @@
   let objectPage = 1, objectQuery = '', objectEpoch = 0, objectItems = [], objectLoading = false;
   let listPage = 1, listParams = null, listEpoch = 0, listLoading = false, driveEpoch = 0;
   let drafts = [], saving = false;
+  let pollTimer=null;
   function element(tag, text) { const node = document.createElement(tag); if (text != null) node.textContent = text; return node; }
   async function api(url, options = {}) {
     const response = await fetch(url, {cache:'no-store', ...options});
@@ -100,11 +101,13 @@
     if(!selected && drafts.some(draft=>draft.payload.object_id.toLowerCase()===payload.object_id.toLowerCase()))throw Error('Phiếu nhập này đã có trong danh sách chờ.');
     return payload;
   }
-  function nextDraft() {
+  async function nextDraft() {
     if(saving || selected || window.QCFormUI.busy())return;
     if(saved){newForm();return;}
     try {
       if(drafts.length>=9)throw Error('Đang nhập phiếu thứ 10. Hãy bấm Tạo Phiếu để lưu lô.');
+      if(!$('qcForm').reportValidity())throw Error('Hãy kiểm tra các trường bắt buộc.');
+      await window.QCFormUI.prepare?.();
       const payload=formPayload();
       if(payload.check_type!=='QC NVL')throw Error('Tạo nhiều phiếu chỉ áp dụng cho IQC NVL.');
       drafts.push({payload,files:window.QCFormUI.files(),label:payload.object_id+' · '+payload.quantity+' · '+payload.result});
@@ -117,6 +120,10 @@
     let payload, batch=false;
     try {
       const hasCurrent=['objectId','quantity','result','standardUrl','note','imageUrl'].some(id=>$(id).value.trim());
+      if(hasCurrent||!drafts.length||selected){
+        if(!$('qcForm').reportValidity())throw Error('Hãy kiểm tra các trường bắt buộc.');
+        await window.QCFormUI.prepare?.();
+      }
       const current=hasCurrent || !drafts.length || selected ? formPayload() : null;
       if(!selected && (drafts.length || current?.check_type==='QC NVL')) {
         const items=[...drafts.map(draft=>draft.payload),...(current?[current]:[])];
@@ -136,6 +143,12 @@
     try {
       const result=await api(selected ? '/api/qc/'+encodeURIComponent(selected.id) : batch?'/api/qc/batch':'/api/qc',{
         method:selected?'PUT':'POST',headers:{'Content-Type':'application/json','Idempotency-Key':requestToken},body});
+      const received=batch?result.items:[result];
+      if(received.every(item=>item.sync)){
+        saved=true;drafts=[];
+        const prefix=received[0].id.match(/^QC_\d{6}/)?.[0]||received[0].id;
+        location.assign('/qc/list?'+new URLSearchParams({q:prefix}));return;
+      }
       if(selected){
         selected=result;$('imageUrl').value=result.image_url||'';safeLink($('openImage'),result.evidence);
         window.QCFormUI.load(result,viewOnly);
@@ -174,6 +187,14 @@
         const tr=element('tr');
         const whole=integerValue(row.quantity);
         for(const value of [row.id,row.checked_at?.replace('T',' '),row.check_type,row.object_type,row.production_order_id,whole?BigInt(whole).toLocaleString('vi-VN'):'',row.result,row.staff_name])tr.append(element('td',value??''));
+        const sync=element('td'),labels={PENDING:'Chờ xử lý',PROCESSING:'Đang hoàn thiện hồ sơ',COMPLETED:'Đã lưu đầy đủ',FAILED:'Lỗi đồng bộ'};
+        sync.append(element('strong',row.sync_status?row.sync_status+' · '+labels[row.sync_status]:'Hồ sơ trước queue'));
+        if(row.sync_step)sync.append(element('p',row.sync_step));
+        if(row.sync_error)sync.append(element('p',row.sync_error));
+        if(['FAILED','PENDING'].includes(row.sync_status)&&(user.permissions.includes('QC_EDIT')||row.staff_id===user.id&&user.permissions.includes('QC_CREATE'))){
+          const retry=element('button','Thử lại đồng bộ');retry.type='button';retry.onclick=async()=>{retry.disabled=true;try{await api('/api/qc/'+encodeURIComponent(row.id)+'/retry-sync',{method:'POST'});await loadList(listPage);}catch(error){$('message').textContent=error.message;retry.disabled=false;}};sync.append(retry);
+        }
+        tr.append(sync);
         for(const [value,label] of [[row.evidence,'Mở bằng chứng']]){
           const cell=element('td'),link=element('a',label);link.target='_blank';link.rel='noopener noreferrer';safeLink(link,value);cell.append(link);tr.append(cell);
           if(label==='Mở bằng chứng' && row.evidence_pending)cell.append(element('p','Chờ xử lý Drive · mở chi tiết để thử lại'));
@@ -181,9 +202,12 @@
         const action=element('td'),button=element('button','Xem chi tiết');button.type='button';button.onclick=()=>openDetail(row.id);action.append(button);tr.append(action);return tr;
       }));$('summary').textContent=result.total+' phiếu QC';$('pageInfo').textContent='Trang '+page;
       $('previous').disabled=page===1;$('next').disabled=page*result.size>=result.total;
+      clearTimeout(pollTimer);
+      if(result.items.some(row=>['PENDING','PROCESSING'].includes(row.sync_status)))pollTimer=setTimeout(()=>{if(!document.hidden&&!listLoading)loadList(listPage);},5000);
     }catch(error){if(epoch===listEpoch)$('message').textContent=error.message;}
     finally{if(epoch===listEpoch)listLoading=false;}
   }
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&listParams&&!listLoading)loadList(listPage);});
   async function openDetail(id) {
     try {
       if(window.QCFormUI.busy())throw Error('Hãy hoàn tất upload hoặc giữ nguyên màn hình để thử lại.');

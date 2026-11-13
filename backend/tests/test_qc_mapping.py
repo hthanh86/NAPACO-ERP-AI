@@ -55,6 +55,18 @@ def stage(admin, monkeypatch, reviewed=True):
     monkeypatch.setattr(signing,'cipher',lambda:secret)
     monkeypatch.setattr(signing,'identity',lambda request,db,user:{'user_id':user.id,'name':user.name,
         'email':user.email,'google_subject':'test-subject','session':'test-session'})
+    # The new policy permits exactly one effective common template. Isolate
+    # pre-existing local templates inside the rollback-only test transaction.
+    from app.main import app
+    from app.core.database import get_db
+    from app.integrations.google.models import GoogleCredential
+    from sqlalchemy import update
+    scope=app.dependency_overrides[get_db]();db=next(scope)
+    db.execute(update(QCTemplate).values(status='INACTIVE'))
+    if not db.get(GoogleCredential,'_TEST_ADMIN'):
+        db.add(GoogleCredential(user_id='_TEST_ADMIN',subject='test-subject',encrypted_access='test-only',
+            encrypted_refresh='test-only',expires_at=datetime(2099,1,1),scopes='test-only'))
+    db.commit();scope.close()
     source = sheet()
     def read(db,user,identifier,preview=False):
         return {**deepcopy(source),'spreadsheet_id':sheets.spreadsheet_id(identifier)}
@@ -195,11 +207,11 @@ def test_nonmatching_and_unapproved_templates_not_offered(clients,monkeypatch):
     admin,_,conn=clients
     row,_,_=stage(admin,monkeypatch);selection=nvl(conn)
     conn.execute(QCTemplate.__table__.update().where(QCTemplate.id==row['id']).values(STATUS='DRAFT',APPROVED_AT=None,APPROVED_BY=None))
-    assert row['id'] not in [item['id'] for item in admin.get('/api/qc/template-options',params=selection).json()['items']]
+    assert admin.get('/api/qc/template-options',params=selection).status_code==422
     row={**row,'approved_at':None,'status':'DRAFT'}
     release(admin,row)
     conn.execute(QCTemplate.__table__.update().where(QCTemplate.id==row['id']).values(PRODUCT_ID='_TEST_P2'))
-    assert row['id'] not in [item['id'] for item in admin.get('/api/qc/template-options',params=selection).json()['items']]
+    assert admin.get('/api/qc/template-options',params=selection).status_code==422
     assert create(admin,qc_payload(row,selection)).status_code==422
 
 
