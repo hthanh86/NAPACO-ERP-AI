@@ -13,6 +13,16 @@ from app.modules.materials.receiving.models import FilmReceipt
 from app.modules.qc.materials import receipt_window
 from app.integrations.google import drive
 from app.migrations.import_qc_production import prepare, scalar
+from app.modules.qc.forms import QC_NVL_261101_V1
+
+pytestmark = pytest.mark.usefixtures('qc_drive')
+
+
+def form_payload(conclusion='FAIL'):
+    return {'code':'QC_NVL_261101_V1','resin':'PET', 'answers':[
+        {'id':criterion['id'],'actual':'Kết quả thực tế','assessment':conclusion if index==0 else 'PASS','note':''}
+        for index,criterion in enumerate(QC_NVL_261101_V1['criteria'])],
+        'conclusion':conclusion,'note':'','signature':[[[.1,.1],[.3,.4],[.6,.2]]]}
 
 
 def source_data(connection):
@@ -25,10 +35,13 @@ def source_data(connection):
 
 
 def payload(kind='NVL', check_type='QC NVL'):
-    return {'check_type':check_type, 'object_type':kind, 'object_id':'_TEST_'+kind+'_QC',
+    data = {'check_type':check_type, 'object_type':kind, 'object_id':'_TEST_'+kind+'_QC',
             'checked_at':'2026-11-12T09:15:30.123456+07:00', 'quantity':'3', 'result':'NG',
             'standard_url':'https://drive.google.com/file/d/example/view',
             'note':'Sai ngoại quan. Người điều hành chờ quyết định.', 'image_url':''}
+    if kind=='NVL':
+        data.update(form=form_payload(),parent_folder_id='mock-parent',standard_url='QC_NVL_261101_V1')
+    return data
 
 
 def create(client, data, token=None):
@@ -76,7 +89,7 @@ def test_validation_idempotency_edit_and_rollback(clients):
     assert create(admin,payload(),token).json()==saved
     assert create(admin,{**payload(),'note':'Khác nội dung'},token).status_code==409
     assert connection.scalar(select(func.count()).select_from(QualityCheck))==before+1
-    edit={**payload(),'result':'OK','note':'Đã kiểm tra lại','version':saved['version']}
+    edit={**payload(),'result':'OK','form':form_payload('PASS'),'note':'Đã kiểm tra lại','version':saved['version']}
     assert reader.put('/api/qc/'+saved['id'],json=edit).status_code==403
     updated=admin.put('/api/qc/'+saved['id'],json=edit)
     assert updated.status_code==200,updated.text

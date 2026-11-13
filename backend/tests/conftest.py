@@ -16,6 +16,22 @@ from app.auth.security import hash_password
 
 
 @pytest.fixture
+def qc_drive(monkeypatch):
+    """QC integration tests exercise MySQL; Drive calls are explicitly mocked."""
+    from app.modules.qc import drive_bundle
+    from app.modules.qc.models import QualityCheck
+    monkeypatch.setattr(drive_bundle, 'access_token', lambda db,user:'mock-token')
+    monkeypatch.setattr(drive_bundle, 'in_scope', lambda db,token,identifier,writable=False:{'id':identifier})
+    def prepare(db,user,identifier):
+        obj=db.get(QualityCheck,identifier)
+        obj.drive_folder_id='mock-folder-'+identifier
+        obj.source={**(obj.source or {}),drive_bundle.JOB:{'pending':False,'error':''}}
+        db.commit()
+        return obj
+    monkeypatch.setattr(drive_bundle, 'prepare', prepare)
+
+
+@pytest.fixture
 def clients():
     connection = engine.connect()
     outer = connection.begin()

@@ -127,3 +127,44 @@ Tái sử dụng `users`, `role_permissions`, session và `require()`:
 3. Nhập ngày giờ, số lượng, kết quả, hồ sơ và ghi chú; nhấn **Lưu phiếu QC**. Với nguồn LSX/SETUP/HUT đang trống, cần có bản ghi nghiệp vụ thật trước khi chọn chúng.
 4. Vào **QC → Danh sách QC**, chọn bộ lọc và nhấn **Tra cứu**; mở chi tiết để xem/sửa theo quyền.
 5. Nếu chưa nối Google, dùng liên kết **Kết nối Google Drive** tại sidebar hoặc dán URL hồ sơ trực tiếp.
+# Biểu mẫu ERP và thư mục hồ sơ QC — migration 006
+
+- `system_settings`: khóa `QC_ROOT_FOLDER_ID`, giá trị `1N_sNZGMv2LyPE1mowNGRTa9KW6A2kmnz`. Không dùng lại thư mục upload của module đơn hàng.
+- `qc_checks`: thêm `DRIVE_FOLDER_ID VARCHAR(255) NULL`, `FORM_DATA JSON NULL`. Giữ nguyên `Tieu_Chuan_STD TEXT`, `evidence` và toàn bộ dữ liệu cũ. Không tạo `QC_FILES`, `DRIVE_PARENT_FOLDER_ID`, `DRIVE_FOLDER_URL`.
+- `QC_NVL_V1` định nghĩa trong code gồm 7 hạng mục từ ảnh người dùng cung cấp. Không tự bổ sung dung sai hoặc suy ra quy tắc theo PET/PP/PS/PVC. Tiêu chí Không áp dụng cần lý do; kết luận phải khớp đánh giá. PASS ánh xạ sang kết quả phiếu OK, FAIL sang NG.
+- `FORM_DATA` lưu bản chụp định nghĩa/phiên bản, đầu vào, kết quả, nét ký chuẩn hóa, người dùng và thời điểm ký do backend ghi nhận. PDF và dialog phiếu cũ dùng bản chụp này. Thay cấu trúc đã sử dụng phải tạo mã phiên bản mới.
+- Phiếu IQC mới bắt buộc có biểu mẫu đã ký và thư mục cha hợp lệ. Phiếu lịch sử vẫn xem/sửa theo cấu trúc cũ; khi bổ sung form ERP sẽ áp dụng luồng mới.
+- Backend duyệt và kiểm tra chuỗi thư mục cha tới thư mục gốc bằng OAuth của người dùng. Chặn file/shortcut và thư mục ngoài phạm vi; kiểm tra lại lúc lưu, tạo hồ sơ và upload.
+- Lưu QC trong transaction trước xử lý Drive. Cấp trước và lưu ID thư mục trước tạo; thử lại dùng cùng ID. Không đổi tên/move bằng chứng cũ trong luồng form mới. Trạng thái tạo thư mục/PDF nằm trong JSON `source`, không có bảng danh mục file.
+- Upload bằng chứng sau lưu, theo khối 4 MiB qua backend; token OAuth không đưa ra trình duyệt. Ticket upload mã hóa gắn với user/QC/folder, hỗ trợ thăm dò offset và tiếp tục. Dữ liệu file giữ tại trình duyệt tới khi gửi; đóng trang cần chọn lại file chưa hoàn tất. Drive appProperties dùng nhận diện file đã gửi để tránh gửi lại bản hoàn tất.
+- Đã chạy 19 test QC/IQC/form/phạm vi Drive/retry trên image mới, gồm xuất PDF thật với font Unicode và ghi chú dài; test nghiệp vụ dùng rollback MySQL. Browser đã thử nhập đủ 7 tiêu chí, ký bằng pointer, chọn thư mục, gửi khối bằng chứng và điều hướng về danh sách; POST tạo/upload của bài thử browser được giả lập, không thêm phiếu thật.
+- Migration 006 đã chạy local. Đối chiếu 6 phiếu lịch sử không thay đổi; bản sao trước migration: `reports/qc-before-006.json` (quyền 600). Một trong hai kết nối OAuth có quyền ghi thư mục gốc `05_HỒ_SƠ_RECORDS`; kết nối còn lại bị Google từ chối HTTP 403.
+- Đã bổ sung `reportlab==5.1.0` trong `backend/requirements.txt` và font `fonts-dejavu-core` trong `backend/Dockerfile`, build image `napaco-local-backend:latest` (`b206efcc3acb`) và recreate riêng backend local. Backend đang chạy image mới; MySQL không bị recreate hoặc xóa volume.
+- Đã xuất PDF thật, render và xem trực tiếp: mẫu 7 tiêu chí, tiếng Việt, kết luận và chữ ký nằm đủ trên một trang A4 ngang. Trường hợp ghi chú dài được kiểm tra xuất nhiều trang không phát sinh lỗi bố cục.
+- Đã kiểm tra Drive thật bằng OAuth có quyền trên thư mục gốc: tạo thư mục QC/PDF trong thư mục test riêng, thử lại dùng cùng ID thư mục/PDF, upload 9.200.000 byte theo khối, thăm dò và tiếp tục từ offset 4.194.304, đối chiếu checksum và bỏ qua file đã hoàn tất khi gửi lại. Có đúng hai file trong thư mục con: PDF và bằng chứng thử nghiệm. Thư mục test đã đưa vào thùng rác; transaction QC test rollback, số phiếu trước/sau đều là 6, revision MySQL vẫn `006`. Kết quả kỹ thuật lưu trong `reports/qc-deploy-verification.json`.
+- Tài khoản `local-admin` của tab trình duyệt hiện chưa nối Google. Để thử toàn bộ quy trình, đăng nhập tài khoản ERP đã nối Google có quyền ghi thư mục QC, hoặc dùng **Kết nối Google Drive** với tài khoản Google có quyền tương ứng. Chưa thử video kích thước hàng GB; cơ chế truyền từng khối đã được kiểm tra thực tế với file 9,2 MB.
+
+### Các file chính của phần biểu mẫu và Drive
+
+- `backend/app/modules/qc/forms.py`, `schemas.py`, `service.py`, `api.py`, `models.py`: định nghĩa/kiểm tra biểu mẫu, lưu snapshot và tích hợp luồng QC hiện có.
+- `backend/app/modules/qc/pdf.py`, `drive_bundle.py`: xuất PDF, kiểm tra phạm vi thư mục và upload có tiếp tục.
+- `backend/app/core/settings.py`, `model_registry.py`, `backend/alembic/versions/006_qc_forms.py`: cấu hình chung và migration bổ sung an toàn.
+- `backend/app/integrations/google/oauth.py`: tái sử dụng OAuth, bổ sung xử lý Drive 404 cho thử lại theo ID đã cấp.
+- `frontend/qc/index.html`, `forms.js`, `qc.js`, `qc.css`: dialog biểu mẫu/chữ ký, chọn thư mục, giữ file trước lưu và tiến trình upload.
+- `backend/tests/conftest.py`, `test_qc.py`, `test_iqc.py`, `test_qc_forms.py`: kiểm thử tập trung có rollback; `backend/requirements.txt`, `backend/Dockerfile`: dependency PDF/font.
+
+## Điều chỉnh template, phiếu PQC và thư mục mặc định — 12/11/2026
+
+- Tài liệu mô tả dữ liệu hiện hành: [QC — dữ liệu và biểu mẫu](./QC-du-lieu-va-bieu-mau.md). Phần này thay thế hướng dẫn chọn thư mục thủ công và mã template trong mô tả triển khai trước ở trên.
+- Template NVL đang ban hành là `QC_NVL_261101_V1`. Mã cũ giữ cho lịch sử; ánh xạ `RELEASED` chỉ cho phép một template đang ban hành mỗi nghiệp vụ. Chưa có template sản phẩm thực tế, nên giao diện báo chưa ban hành và không cung cấp mẫu NVL cho QC sản phẩm.
+- Dung sai/Ghi chú dùng placeholder, ẩn khi focus; giá trị gợi ý không được lưu như ghi chú người dùng. Không áp dụng khóa/bôi xám kết quả thực tế, không bắt nhập ghi chú; backend chuẩn hóa actual về rỗng.
+- Bản ghi QC giữ mã `QC_yymmdd_xx`; hồ sơ điền và ký có mã `PQC_yymmdd_xx` cùng phần ngày/số, lưu tại `FORM_DATA.document_id`. PDF mới tên PQC, thư mục vẫn tên QC. Không có bộ đếm PQC hoặc bảng PQC riêng.
+- Hồ sơ mới dùng trực tiếp root tại `system_settings.QC_ROOT_FOLDER_ID`, không mở hộp duyệt thư mục. Backend lấy lại root từ MySQL lúc lưu và giữ kiểm tra quyền/phạm vi Drive.
+- Đã build và recreate backend local với image `7cff407f10dc`. Bộ kiểm thử QC tập trung đạt 23 test, bao gồm chọn template đúng nghiệp vụ, chặn bản đã ngừng ban hành cho phiếu mới, giữ snapshot đã lưu và mã PQC. Đã kiểm tra giao diện placeholder/NA/root tự động; không thêm hoặc sửa phiếu nghiệp vụ thật. Không migration mới; 6 QC lịch sử giữ nguyên, revision `006`.
+
+### Làm rõ chọn thư mục cha
+
+- Đã khôi phục **Mở Drive · Chọn thư mục cha**. Hộp chọn mở tại root hiện hành từ `system_settings`, cho duyệt/chọn thư mục bên trong; backend dùng thư mục cha đã chọn để tạo thư mục QC, tiếp tục kiểm tra phạm vi và quyền ghi.
+- Chọn thư mục không ghi hoặc thay đổi cấu hình chung. Phiếu đã có thư mục bằng chứng giữ nguyên thư mục đó.
+- Không chạy test cho điều chỉnh này theo yêu cầu người dùng; kết quả 23 test nêu trên thuộc bản trước điều chỉnh.
+

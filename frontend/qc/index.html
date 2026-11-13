@@ -2,12 +2,12 @@
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>QC · NAPACO ERP</title><link rel="stylesheet" href="/static/auth/users.css">
 <link rel="stylesheet" href="/static/shared/navigation.css"><link rel="stylesheet" href="/static/qc/qc.css">
-<script defer src="/static/shared/navigation.js"></script><script defer src="/static/qc/qc.js"></script></head>
+<script defer src="/static/shared/navigation.js"></script><script defer src="/static/qc/forms.js"></script><script defer src="/static/qc/qc.js"></script></head>
 <body><main><h1 id="heading">QC · Quản lý chất lượng</h1><p id="intro">Ghi nhận kết quả kiểm tra và hồ sơ chất lượng.</p>
 <div id="message" role="status" aria-live="polite"></div>
 <section id="pending" hidden><h2>Tạo Phiếu NCR/CAPA</h2><p>Đang phát triển.</p></section>
 <section id="listing" hidden><h2>Danh sách QC</h2><form id="filters" class="grid">
-<label>Mã phiếu QC<input name="q" maxlength="100" placeholder="QC_yymmdd_xx"></label>
+<label>Mã phiếu QC<input name="q" maxlength="100" placeholder="QC_yymmdd"></label>
 <label>Loại kiểm tra<select name="check_type"><option value="">Tất cả</option><option>QC NVL</option><option>QC ĐẦU CA</option><option>QC GIỮA CA</option><option>QC CUỐI CA</option></select></label>
 <label>Đối tượng<select name="object_type"><option value="">Tất cả</option><option>NVL</option><option>SETUP</option><option>HUT</option><option>CAT</option><option>EB</option></select></label>
 <label hidden>OBJECT_ID<input name="object_id" maxlength="100" disabled></label><label>LSX_ID<input name="production_order_id" maxlength="100"></label>
@@ -27,9 +27,9 @@
 <label>Số lượng kiểm tra<input id="quantity" name="quantity" type="number" min="1" step="1" required></label>
 <label>Kết quả kiểm tra<input id="result" name="result" list="resultOptions" maxlength="500" required placeholder="OK / NG hoặc kết quả nghiệp vụ"><datalist id="resultOptions"><option value="OK"><option value="NG"></datalist></label>
 <label>Người QC<input id="staff" readonly></label><label>NCR_ID hiện có<input id="ncr" readonly placeholder="Chưa liên kết"></label></div>
-<fieldset><legend>Tiêu chuẩn / hồ sơ kiểm tra</legend><label>URL tài liệu<input id="standardUrl" name="standard_url" type="url" maxlength="10000" placeholder="https://..."></label><a id="openStandard" target="_blank" rel="noopener noreferrer" hidden>Mở tài liệu</a>
-<div id="drivePicker"><div class="search-line"><label>Tìm trong Google Drive của bạn<input id="driveSearch" maxlength="200" placeholder="Tên file hoặc URL Google Drive"></label><button type="button" id="findDrive">Tìm file Drive</button></div><p id="driveStatus" role="status"></p><div id="driveResults"></div></div></fieldset>
-<label>Bằng chứng (URL)<input id="imageUrl" name="image_url" type="url" maxlength="10000"></label><a id="openImage" target="_blank" rel="noopener noreferrer" hidden>Mở bằng chứng</a>
+<input id="standardUrl" name="standard_url" type="hidden"><input id="imageUrl" name="image_url" type="hidden">
+<fieldset><legend>Biểu mẫu kiểm tra ERP</legend><div class="actions"><button id="chooseForm" type="button">Chọn biểu mẫu QC</button><a id="openStandard" target="_blank" rel="noopener noreferrer" hidden>Mở tiêu chuẩn lịch sử</a><a id="downloadFormPdf" target="_blank" rel="noopener noreferrer" hidden>Tải PDF đã ký</a></div><p id="formSummary">Chưa chọn biểu mẫu.</p></fieldset>
+<fieldset><legend>Bằng chứng QC</legend><button id="chooseFolder" type="button">Mở Drive · Chọn thư mục cha</button><p id="folderSummary">Chọn thư mục cha để lưu hồ sơ QC.</p><label>Ảnh, video, PDF hoặc tài liệu từ thiết bị<input id="evidenceFiles" type="file" multiple></label><p>File chỉ được upload khi lưu phiếu. Giữ màn hình này mở đến khi upload xong; nếu đóng trang, cần chọn lại các file chưa hoàn tất.</p><ul id="fileSummary"></ul><a id="openImage" target="_blank" rel="noopener noreferrer" hidden>Mở thư mục bằng chứng</a></fieldset>
 <label>Ghi chú / tình trạng NG / phương án xử lý<textarea id="note" name="note" rows="4" maxlength="20000"></textarea></label>
 <p id="formError" class="error" role="alert"></p><div class="actions"><button id="newCheck" type="button">Tạo phiếu tiếp theo</button><button id="save" type="submit" formnovalidate>Tạo Phiếu</button><button id="closeEditor" type="button" hidden>Đóng phiếu</button></div></form></section>
 </main></body></html>

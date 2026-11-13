@@ -3,6 +3,7 @@ from app.core.database import Base
 import app.auth.models
 import app.compatibility.models
 import app.core.models
+import app.core.settings
 import app.integrations.google.models
 import app.migrations.models
 import app.modules.customers.models

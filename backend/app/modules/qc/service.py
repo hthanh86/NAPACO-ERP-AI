@@ -13,6 +13,7 @@ from app.modules.materials.receiving.models import FilmReceipt
 from app.modules.production.models import ProductionOrder, ProductionSetup, FormingLog, CuttingLog, EBLog
 from app.modules.qc.models import QualityCheck
 from app.modules.qc.materials import eligibility
+from app.modules.qc import evidence, forms, drive_bundle
 from app.auth.models import User
 
 ALLOWED = {'QC NVL': {'NVL'}, 'QC ĐẦU CA': {'SETUP'},
@@ -78,7 +79,7 @@ def resolve_object(db, data, existing=None):
 
 
 FIELDS = ['id', 'checked_at', 'check_type', 'object_type', 'object_id', 'production_order_id',
-          'standard_url', 'quantity', 'result', 'staff_id', 'ncr_id', 'note', 'image_url']
+          'standard_url', 'quantity', 'result', 'staff_id', 'ncr_id', 'note', 'image_url', 'drive_folder_id', 'form_data']
 
 
 def record(obj):
@@ -100,12 +101,31 @@ def staff_name(db, identifier):
 def detail_record(db, obj):
     result = record(obj)
     result['staff_name'] = staff_name(db, obj.staff_id)
-    result['evidence'] = obj.image_url
+    result['form_document_id'] = forms.document_id(obj.id) if obj.form_data else None
+    result['evidence'] = ('https://drive.google.com/drive/folders/'+obj.drive_folder_id) if obj.drive_folder_id else obj.image_url
+    task = (obj.source or {}).get(drive_bundle.JOB) if obj.form_data else (obj.source or {}).get(evidence.TASK)
+    result['evidence_pending'] = bool(task and task.get('pending', True))
+    result['evidence_error'] = task.get('error', 'Bằng chứng đang chờ xử lý trên Drive.') if task else ''
     return result
 
 
-def apply_values(obj, data, identifier, lsx):
-    values = data.model_dump(exclude={'version'})
+def finish_evidence(db, user, result, batch):
+    records = result['items'] if batch else [result]
+    completed = []
+    for item in records:
+        if not item.get('evidence_pending'):
+            completed.append(item)
+            continue
+        if item.get('form_data'):
+            drive_bundle.prepare(db, user, item['id'])
+        else:
+            evidence.process(db, user, item['id'])
+        completed.append(detail_record(db, db.get(QualityCheck, item['id'])))
+    return {'items': completed} if batch else completed[0]
+
+
+def apply_values(obj, data, identifier, lsx, user):
+    values = data.model_dump(exclude={'version', 'form', 'parent_folder_id'})
     stamp = values['checked_at']
     values['checked_at'] = stamp.astimezone(TIMEZONE).replace(tzinfo=None) if stamp.tzinfo else stamp
     values['checked_at'] = values['checked_at'].replace(microsecond=0)
@@ -113,6 +133,28 @@ def apply_values(obj, data, identifier, lsx):
     values['production_order_id'] = lsx
     for key, value in values.items():
         setattr(obj, key, value)
+    if data.form:
+        saved_definition = (obj.form_data or {}).get('definition')
+        if saved_definition and saved_definition['code'] == data.form.code:
+            if saved_definition.get('business', 'NVL') != forms.business(data.check_type):
+                raise HTTPException(422, 'Template đã lưu không áp dụng cho nghiệp vụ này.')
+        else:
+            saved_definition = None
+            released = forms.current(data.check_type)
+            if not released or released['code'] != data.form.code:
+                raise HTTPException(422, 'Chỉ được dùng template đang ban hành cho nghiệp vụ này.')
+        context = {key:str(values[key]) for key in ('checked_at','check_type','object_type','object_id','quantity','result','note')}
+        snapshot = forms.filled_form(data.form, user, context, saved_definition)
+        snapshot['document_id'] = forms.document_id(obj.id)
+        expected = 'OK' if data.form.conclusion == 'PASS' else 'NG'
+        if data.result != expected:
+            raise HTTPException(422, 'Kết quả phiếu phải khớp kết luận biểu mẫu: PASS = OK, FAIL = NG.')
+        # An unchanged form retains the original internal signature timestamp.
+        if not obj.form_data or obj.form_data.get('input') != snapshot['input'] or obj.form_data.get('context') != context:
+            obj.form_data = snapshot
+        obj.standard_url = data.form.code
+    elif obj.form_data:
+        raise HTTPException(422, 'Phiếu đã có form ERP phải gửi đầy đủ form khi sửa.')
 
 
 def create(db, user, data, request_id):
@@ -131,7 +173,20 @@ def create_records(db, user, items, request_id, batch=True):
     if request.user_id != user.id or request.payload_hash != digest:
         raise HTTPException(409, 'Mã yêu cầu đã được sử dụng cho nội dung khác.')
     if request.result:
-        return request.result
+        result = request.result
+        db.commit()
+        return finish_evidence(db, user, result, batch)
+    for data in items:
+        if data.check_type == 'QC NVL' and not data.form:
+            raise HTTPException(422, 'Phiếu IQC mới cần biểu mẫu ERP đã nhập và ký.')
+        if data.form:
+            if not data.parent_folder_id:
+                raise HTTPException(422, 'Hãy chọn thư mục cha cho hồ sơ QC.')
+            token = drive_bundle.access_token(db, user)
+            drive_bundle.in_scope(db, token, data.parent_folder_id, writable=True)
+    evidence_ids = [ref[0] for item in items if item.image_url and (ref := evidence.reference(item.image_url))]
+    if len(evidence_ids) != len(set(evidence_ids)):
+        raise HTTPException(422, 'Mỗi phiếu trong lô cần file hoặc thư mục bằng chứng Drive riêng; không dùng trùng liên kết.')
     # Lock every receipt in a stable order before taking the shared daily sequence
     # lock. A concurrent create rechecks eligibility after the receipt lock.
     resolved = {}
@@ -150,17 +205,22 @@ def create_records(db, user, items, request_id, batch=True):
     for offset, data in enumerate(items, 1):
         identifier, lsx = resolved[(data.object_type, data.object_id)]
         obj = QualityCheck(id=prefix + str(highest+offset).zfill(2), staff_id=user.id, ncr_id='', source={})
-        apply_values(obj, data, identifier, lsx)
+        apply_values(obj, data, identifier, lsx, user)
+        if data.form:
+            drive_bundle.schedule(obj, user, data.parent_folder_id)
+        else:
+            evidence.schedule(obj, user)
         db.add(obj)
         db.flush()
-        results.append({**record(obj), 'staff_name':user.name, 'evidence':obj.image_url})
+        results.append({**record(obj), 'staff_name':user.name, 'evidence':obj.image_url,
+                        'evidence_pending':bool((obj.source or {}).get(evidence.TASK) or (obj.source or {}).get(drive_bundle.JOB)), 'evidence_error':''})
         db.add(Audit(user_id=user.id, action='QC_CREATE', entity_id=obj.id,
                      details={'object_type':obj.object_type, 'object_id':obj.object_id}))
     sequence.value = highest + len(items)
     result = {'items':results} if batch else results[0]
     request.result = result
     db.commit()
-    return result
+    return finish_evidence(db, user, result, batch)
 
 
 def update(db, user, identifier, data):
@@ -170,9 +230,20 @@ def update(db, user, identifier, data):
     if not data.version or data.version != record(obj)['version']:
         raise HTTPException(409, 'Phiếu đã thay đổi. Hãy mở lại trước khi sửa.')
     object_id, lsx = resolve_object(db, data, existing=obj)
-    apply_values(obj, data, object_id, lsx)
+    if data.form and not obj.drive_folder_id:
+        if not data.parent_folder_id:
+            raise HTTPException(422, 'Hãy chọn thư mục cha cho hồ sơ QC.')
+        drive_bundle.in_scope(db, drive_bundle.access_token(db, user), data.parent_folder_id, writable=True)
+    apply_values(obj, data, object_id, lsx, user)
+    if data.form:
+        drive_bundle.schedule(obj, user, data.parent_folder_id)
+    else:
+        evidence.schedule(obj, user)
     db.flush()
-    result = detail_record(db, obj)
     db.add(Audit(user_id=user.id, action='QC_EDIT', entity_id=obj.id, details={'object_type':obj.object_type, 'object_id':obj.object_id}))
     db.commit()
-    return result
+    if data.form:
+        drive_bundle.prepare(db, user, identifier)
+    elif (obj.source or {}).get(evidence.TASK):
+        evidence.process(db, user, identifier)
+    return detail_record(db, db.get(QualityCheck, identifier))

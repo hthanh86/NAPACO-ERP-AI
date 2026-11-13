@@ -24,9 +24,13 @@
     return item;
   }
   function group(title, entries) {
-    const section = el('div', '', 'erp-nav-group');
-    section.append(el('div', title, 'erp-nav-label'));
-    entries.forEach(entry => section.append(link(...entry)));
+    const section = el('details', '', 'erp-nav-group erp-submenu');
+    const summary = el('summary', '', 'erp-module-link erp-submenu-toggle');
+    summary.append(el('span', entries[0][2], 'erp-module-icon'), el('span', title), el('span', '', 'erp-submenu-chevron'));
+    const children = el('div', '', 'erp-submenu-links');
+    entries.forEach(entry => children.append(link(...entry)));
+    section.append(summary, children);
+    section.open = !!children.querySelector('[aria-current="page"]');
     return section;
   }
   async function init() {
@@ -69,7 +73,8 @@
         qc.append(summary, children); (nav || sidebar).append(qc);
       }
       if (user.permissions.includes('USER_MANAGE')) {
-        master.insertBefore(link('User', '/users', '⚙'), master.children[1]);
+        master.querySelector('.erp-submenu-links').prepend(link('User', '/users', '⚙'));
+        if (location.pathname === '/users') master.open = true;
       }
       panel.append(el('strong', user.name), el('span', user.email || user.id), el('span', user.google_connected ? 'Google Drive: đã kết nối' : 'Google Drive: chưa kết nối'));
       const google = el('a', user.google_connected ? 'Đổi tài khoản Google' : 'Kết nối Google Drive');

@@ -17,7 +17,7 @@ Nguyên tắc:
 - Không tự ý mở rộng phạm vi công việc.
 - Không refactor các chức năng không liên quan.
 - Không thay đổi logic nghiệp vụ đang hoạt động ổn định.
-- Không tự ý cài đặt dependency mới.
+- Chỉ cài đặt dependency mới khi thấy thực sự cần thiết để thực hiện một tính năng mới
 - Không tự ý triển khai lên môi trường production.
 
 ## 2. Kiểm soát đọc source code và token
@@ -171,7 +171,7 @@ Bước 4: Phân tích nguyên nhân hoặc yêu cầu thay đổi.
 
 Bước 5: Thực hiện sửa đổi tối thiểu, đúng phạm vi.
 
-Bước 6: Kiểm tra diff và test liên quan.
+Bước 6: Kiểm tra diff và và trước khi test liên quan hãy hỏi lại xem có cần test không. Nếu bị từ chối thì thực hiện bước tiếp theo và sau cuối build lên cho người dùng tự test
 
 Bước 7: Báo cáo kết quả ngắn gọn.
 

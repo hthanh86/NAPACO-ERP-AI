@@ -61,8 +61,9 @@
     $('editorHeading').textContent='Tạo Phiếu QC'; $('save').hidden=false; $('save').disabled=false;
     $('newCheck').hidden=false; $('closeEditor').hidden=true; $('topActions').hidden=true; $('formError').textContent='';
     $('save').textContent='Tạo Phiếu';
-    $('driveResults').replaceChildren(); $('driveStatus').textContent=''; $('editor').hidden=false;
+    $('editor').hidden=false;
     for(const node of $('qcForm').querySelectorAll('input,select,textarea,button'))node.disabled=false;
+    window.QCFormUI.reset();
     $('objectPrevious').disabled=true; $('objectNext').disabled=true;
     safeLink($('openStandard'),''); safeLink($('openImage'),'');
     draftPanel();
@@ -88,41 +89,28 @@
     } catch(error) {if(epoch===objectEpoch)$('objectHint').textContent=error.message;}
     finally {if(epoch===objectEpoch){objectLoading=false;$('findObjects').disabled=false;}}
   }
-  async function findDrive() {
-    const query=$('driveSearch').value.trim();if(!query){$('driveStatus').textContent='Nhập tên file hoặc URL Google Drive.';return;}
-    const epoch=++driveEpoch;$('findDrive').disabled=true;$('driveStatus').textContent='Đang tìm file…';$('driveResults').replaceChildren();
-    try {
-      const result=await api('/api/qc/drive?q='+encodeURIComponent(query));if(epoch!==driveEpoch)return;
-      if(!result.success)throw Error(result.error || 'Không tìm được file Drive.');
-      $('driveStatus').textContent=result.files.length ? 'Chọn file để lưu URL hồ sơ.' : 'Không tìm thấy file. Bạn có thể dán URL trực tiếp.';
-      if(result.incomplete)$('driveStatus').textContent+=' Kết quả có thể chưa đầy đủ; hãy dùng từ khóa cụ thể hơn.';
-      $('driveResults').replaceChildren(...result.files.map(file=>{
-        const button=element('button',file.name + (file.updated ? ' · '+file.updated : ''));button.type='button';
-        button.onclick=()=>{$('standardUrl').value=file.url;safeLink($('openStandard'),file.url);$('driveStatus').textContent='Đã chọn: '+file.name;};return button;
-      }));
-    }catch(error){if(epoch===driveEpoch)$('driveStatus').textContent=error.message;}
-    finally{if(epoch===driveEpoch)$('findDrive').disabled=false;}
-  }
   function formPayload() {
     if(!$('objectId').value){$('objectPicker').open=true;throw Error('Hãy chọn một bản ghi cần kiểm tra.');}
     if(!$('qcForm').reportValidity())throw Error('Hãy kiểm tra các trường bắt buộc; số lượng phải là số nguyên dương.');
-    const payload=Object.fromEntries(new FormData($('qcForm')));
+    const payload={...Object.fromEntries(new FormData($('qcForm'))),...window.QCFormUI.payload()};
+    if(payload.check_type==='QC NVL' && (!selected||selected.form_data) && (!payload.form||!payload.form.signature.length))throw Error('Hãy nhập và ký biểu mẫu QC NVL.');
+    if(payload.form && !selected?.drive_folder_id && !payload.parent_folder_id)throw Error('Hãy mở Drive và chọn thư mục cha để lưu hồ sơ QC.');
     if(!selected && drafts.some(draft=>draft.payload.object_id.toLowerCase()===payload.object_id.toLowerCase()))throw Error('Phiếu nhập này đã có trong danh sách chờ.');
     return payload;
   }
   function nextDraft() {
-    if(saving || selected)return;
+    if(saving || selected || window.QCFormUI.busy())return;
     if(saved){newForm();return;}
     try {
       if(drafts.length>=9)throw Error('Đang nhập phiếu thứ 10. Hãy bấm Tạo Phiếu để lưu lô.');
       const payload=formPayload();
       if(payload.check_type!=='QC NVL')throw Error('Tạo nhiều phiếu chỉ áp dụng cho IQC NVL.');
-      drafts.push({payload,label:payload.object_id+' · '+payload.quantity+' · '+payload.result});
+      drafts.push({payload,files:window.QCFormUI.files(),label:payload.object_id+' · '+payload.quantity+' · '+payload.result});
       newForm(true);$('editorHeading').textContent='Nhập phiếu '+(drafts.length+1)+' / 10';
     }catch(error){$('formError').textContent=error.message;}
   }
   async function save(event) {
-    event.preventDefault();if(saved || viewOnly || saving)return;
+    event.preventDefault();if(saved || viewOnly || saving || window.QCFormUI.busy())return;
     $('formError').textContent='';
     let payload, batch=false;
     try {
@@ -136,27 +124,41 @@
       }else payload=current;
     }catch(error){$('formError').textContent=error.message;return;}
     if(selected)payload.version=selected.version;
+    const files=batch?[...drafts.map(draft=>draft.files),...(payload.items.length>drafts.length?[window.QCFormUI.files()]:[])]:[window.QCFormUI.files()];
     const body=JSON.stringify(payload);
     if(body!==requestPayload){requestPayload=body;requestToken=crypto.randomUUID();}
     saving=true;objectEpoch++;driveEpoch++;
     const disabledStates=[...document.querySelectorAll('#qcForm input,#qcForm select,#qcForm textarea,#qcForm button,#drafts button')].map(node=>[node,node.disabled]);
     for(const [node] of disabledStates)node.disabled=true;
+    let createdPrefix = null, completedRecords=[];
     try {
       const result=await api(selected ? '/api/qc/'+encodeURIComponent(selected.id) : batch?'/api/qc/batch':'/api/qc',{
         method:selected?'PUT':'POST',headers:{'Content-Type':'application/json','Idempotency-Key':requestToken},body});
-      if(selected){selected=result;$('message').textContent='Đã lưu phiếu '+result.id+'.';}
+      if(selected){
+        selected=result;$('imageUrl').value=result.image_url||'';safeLink($('openImage'),result.evidence);
+        $('message').textContent='Đã lưu phiếu '+result.id+'.';
+        if(result.evidence_pending)$('formError').textContent='Phiếu đã lưu, bằng chứng chưa xử lý xong: '+result.evidence_error+' Bấm Lưu phiếu để thử lại.';
+      }
       else {
         saved=true;drafts=[];const ids=batch?result.items.map(item=>item.id):[result.id];
+        createdPrefix = ids[0].match(/^QC_\d{6}/)?.[0] || ids[0];
         $('message').textContent='Đã tạo '+ids.length+' phiếu: '+ids.join(', ')+'.';$('editorHeading').textContent='Đã tạo phiếu QC';
         $('save').hidden=true;
       }
+      completedRecords=batch?result.items:[result];
       if(listParams)await loadList(listPage);
     }catch(error){$('formError').textContent=error.message;}
     finally{
       saving=false;for(const [node,disabled] of disabledStates)node.disabled=disabled;
-      if(!saved){$('findObjects').disabled=viewOnly;$('findDrive').disabled=viewOnly;}
+      if(!saved){$('findObjects').disabled=viewOnly;}
       if(saved)for(const node of $('qcForm').querySelectorAll('input,select,textarea,button'))node.disabled=true;
       draftPanel();if(saved)$('newCheck').disabled=false;
+    }
+    if(completedRecords.length){
+      await window.QCFormUI.uploadRecords(completedRecords,files,()=>{
+        if(createdPrefix)location.assign('/qc/list?'+new URLSearchParams({q:createdPrefix}));
+        else if(listParams)loadList(listPage);
+      });
     }
   }
   async function loadList(page=1) {
@@ -171,6 +173,10 @@
         for(const value of [row.id,row.checked_at?.replace('T',' '),row.check_type,row.object_type,row.production_order_id,whole?BigInt(whole).toLocaleString('vi-VN'):'',row.result,row.staff_name])tr.append(element('td',value??''));
         for(const [value,label] of [[row.standard_url,'Mở tiêu chuẩn'],[row.evidence,'Mở bằng chứng']]){
           const cell=element('td'),link=element('a',label);link.target='_blank';link.rel='noopener noreferrer';safeLink(link,value);cell.append(link);tr.append(cell);
+          if(label==='Mở tiêu chuẩn' && /^QC_[A-Z0-9_]+$/.test(value||'')){
+            link.hidden=true;const formButton=element('button',value+' · Xem biểu mẫu');formButton.type='button';formButton.onclick=()=>openDetail(row.id);cell.append(formButton);
+          }
+          if(label==='Mở bằng chứng' && row.evidence_pending)cell.append(element('p','Chờ xử lý Drive · mở chi tiết để thử lại'));
         }
         const action=element('td'),button=element('button','Xem chi tiết');button.type='button';button.onclick=()=>openDetail(row.id);action.append(button);tr.append(action);return tr;
       }));$('summary').textContent=result.total+' phiếu QC';$('pageInfo').textContent='Trang '+page;
@@ -180,6 +186,7 @@
   }
   async function openDetail(id) {
     try {
+      if(window.QCFormUI.busy())throw Error('Hãy hoàn tất upload hoặc giữ nguyên màn hình để thử lại.');
       const record=await api('/api/qc/'+encodeURIComponent(id));newForm();selected=record;
       $('checkType').value=record.check_type;
       if(!combinations[record.check_type]){
@@ -196,7 +203,9 @@
       $('closeEditor').disabled=false;$('save').hidden=viewOnly;
       $('topActions').hidden=false;$('saveTop').hidden=viewOnly;$('closeEditorTop').disabled=false;
       $('save').textContent='Lưu phiếu';$('objectPicker').open=false;draftPanel();
-      safeLink($('openStandard'),record.standard_url);safeLink($('openImage'),record.image_url);
+      safeLink($('openStandard'),record.standard_url);safeLink($('openImage'),record.evidence);
+      window.QCFormUI.load(record,viewOnly);
+      if(record.evidence_pending)$('formError').textContent='Bằng chứng chưa xử lý xong: '+record.evidence_error+' Bấm Lưu phiếu để thử lại.';
       $('editor').scrollIntoView({behavior:'smooth'});
     }catch(error){$('message').textContent=error.message;}
   }
@@ -205,19 +214,36 @@
       user=await window.NAPACO_IDENTITY;
       const view=location.pathname.split('/').pop();
       if(view==='ncr'){$('pending').hidden=false;return;}
+      await window.QCFormUI.init();
       if(view==='create'){newForm();}
       else {$('listing').hidden=false;}
-      $('checkType').onchange=()=>{if(drafts.length){$('checkType').value='QC NVL';$('formError').textContent='Hãy tạo hoặc bỏ các phiếu đang chờ trước khi đổi loại kiểm tra.';}types();resetObject();draftPanel();};$('objectType').onchange=resetObject;
+      $('checkType').onchange=()=>{if(drafts.length){$('checkType').value='QC NVL';$('formError').textContent='Hãy tạo hoặc bỏ các phiếu đang chờ trước khi đổi loại kiểm tra.';}window.QCFormUI.invalidate(true);types();resetObject();draftPanel();};$('objectType').onchange=()=>{window.QCFormUI.invalidate(true);resetObject();};
       $('findObjects').onclick=()=>findObjects();$('objectPrevious').onclick=()=>findObjects(objectPage-1);$('objectNext').onclick=()=>findObjects(objectPage+1);
       $('objectSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();findObjects();}};
-      $('objectResults').onchange=()=>{const value=$('objectResults').value;const row=value===''?null:objectItems[Number(value)];$('objectId').value=row?.id||'';$('lsx').value=row?.production_order_id||'';};
-      $('findDrive').onclick=findDrive;$('driveSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();findDrive();}};
-      $('standardUrl').oninput=()=>safeLink($('openStandard'),$('standardUrl').value);$('imageUrl').oninput=()=>safeLink($('openImage'),$('imageUrl').value);
+      $('objectResults').onchange=()=>{window.QCFormUI.invalidate(true);const value=$('objectResults').value;const row=value===''?null:objectItems[Number(value)];$('objectId').value=row?.id||'';$('lsx').value=row?.production_order_id||'';};
+      for(const id of ['quantity','checkedAt','note','result'])$(id).addEventListener('input',()=>window.QCFormUI.invalidate());
       $('qcForm').onsubmit=save;$('newCheck').onclick=nextDraft;
-      $('closeEditor').onclick=$('closeEditorTop').onclick=()=>{if(!saving){$('editor').hidden=true;driveEpoch++;objectEpoch++;}};
-      window.addEventListener('beforeunload',event=>{if(drafts.length || saving){event.preventDefault();event.returnValue='';}});
+      $('closeEditor').onclick=$('closeEditorTop').onclick=()=>{if(!saving&&!window.QCFormUI.busy()){$('editor').hidden=true;driveEpoch++;objectEpoch++;}};
+      window.addEventListener('beforeunload',event=>{if(drafts.length || saving || window.QCFormUI.busy()){event.preventDefault();event.returnValue='';}});
       $('filters').onsubmit=e=>{e.preventDefault();listParams=[...new FormData($('filters'))].filter(([,value])=>value);loadList();};
       $('previous').onclick=()=>{if(!listLoading)loadList(listPage-1);};$('next').onclick=()=>{if(!listLoading)loadList(listPage+1);};
+      if(view==='list') {
+        const fields=$('filters').elements;
+        const query=new URLSearchParams(location.search).get('q');
+        if(query) {
+          fields.namedItem('q').value=query;
+          // Newly created codes must remain visible even for a backdated inspection.
+        } else {
+          const parts=Object.fromEntries(new Intl.DateTimeFormat('en', {timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(part=>[part.type,part.value]));
+          const year=Number(parts.year),month=Number(parts.month)-1,day=Number(parts.day);
+          const lastDay=new Date(Date.UTC(year,month,0)).getUTCDate();
+          fields.namedItem('date_from').value=new Date(Date.UTC(year,month-1,Math.min(day,lastDay))).toISOString().slice(0,10);
+          fields.namedItem('date_to').value=parts.year+'-'+parts.month+'-'+parts.day;
+        }
+        const pending=new URLSearchParams(location.search).get('evidence_pending');
+        if(pending)$('message').textContent='Phiếu QC đã lưu. Bằng chứng chưa xử lý xong cho '+pending+'. Mở chi tiết và bấm Lưu phiếu để thử lại.';
+        $('filters').requestSubmit();
+      }
     }catch(error){$('message').textContent=error.message;}
   }
   init();

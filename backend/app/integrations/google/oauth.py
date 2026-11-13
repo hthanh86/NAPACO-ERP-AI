@@ -32,7 +32,7 @@ def cipher():
     return Fernet(os.environ['GOOGLE_TOKEN_KEY'].encode())
 
 
-def google_json(url,form=None,token=None,body=None,method=None,headers=None):
+def google_json(url,form=None,token=None,body=None,method=None,headers=None,allow_not_found=False):
     extra=dict(headers or {})
     if form is not None:
         body=urllib.parse.urlencode(form).encode();extra['Content-Type']='application/x-www-form-urlencoded'
@@ -41,6 +41,7 @@ def google_json(url,form=None,token=None,body=None,method=None,headers=None):
     try:
         with urllib.request.urlopen(request,timeout=45) as result:return json.load(result)
     except urllib.error.HTTPError as error:
+        if allow_not_found and error.code == 404:return None
         raise HTTPException(502,'Google từ chối thao tác (HTTP '+str(error.code)+'). Kiểm tra quyền Drive, tài khoản và cấu hình OAuth.') from None
     except (urllib.error.URLError,TimeoutError):
         raise HTTPException(502,'Chưa kết nối được dịch vụ Google. Dữ liệu nghiệp vụ chưa được ghi.') from None

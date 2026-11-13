@@ -112,3 +112,6 @@ def test_iqc_batch_rolls_back_after_partial_flush(clients, monkeypatch):
     assert response.status_code==422 and len(calls)==2
     assert connection.scalar(select(func.count()).select_from(QualityCheck))==before
     assert connection.scalar(select(func.count()).select_from(LegacyRequest))==requests_before
+import pytest
+
+pytestmark = pytest.mark.usefixtures('qc_drive')

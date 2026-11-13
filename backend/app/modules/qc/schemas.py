@@ -3,6 +3,37 @@ from decimal import Decimal
 from typing import Literal
 from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Annotated
+
+
+class CriterionInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    id: str = Field(max_length=50)
+    actual: str = Field(default='', max_length=2000)
+    assessment: Literal['PASS', 'FAIL', 'NA']
+    note: str = Field(default='', max_length=2000)
+
+
+Coordinate = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+Point = tuple[Coordinate, Coordinate]
+Stroke = Annotated[list[Point], Field(min_length=1, max_length=3000)]
+
+
+class FormInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    code: str = Field(max_length=100)
+    resin: Literal['PET', 'PP', 'PS', 'PVC']
+    answers: list[CriterionInput] = Field(min_length=1, max_length=50)
+    conclusion: Literal['PASS', 'FAIL']
+    note: str = Field(default='', max_length=10000)
+    signature: list[Stroke] = Field(min_length=1, max_length=100)
+
+    @field_validator('signature')
+    @classmethod
+    def bounded_signature(cls, strokes):
+        if sum(len(stroke) for stroke in strokes) > 15000:
+            raise ValueError('Chữ ký vượt giới hạn 15000 điểm.')
+        return strokes
 
 CheckType = Literal['QC NVL', 'QC ĐẦU CA', 'QC GIỮA CA', 'QC CUỐI CA']
 ObjectType = Literal['NVL', 'SETUP', 'HUT', 'CAT', 'EB']
@@ -36,6 +67,8 @@ class QCInput(BaseModel):
     note: str = Field(default='', max_length=20000)
     image_url: str = Field(default='', max_length=10000)
     version: str | None = Field(default=None, min_length=64, max_length=64)
+    form: FormInput | None = None
+    parent_folder_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,255}$')
 
     @field_validator('quantity')
     @classmethod
@@ -44,7 +77,15 @@ class QCInput(BaseModel):
             raise ValueError('Số lượng kiểm tra phải là số nguyên dương.')
         return value
 
-    @field_validator('standard_url', 'image_url')
+    @field_validator('standard_url')
+    @classmethod
+    def valid_standard(cls, value):
+        from app.modules.qc.forms import REGISTRY
+        if value in REGISTRY:
+            return value
+        return document_url(value)
+
+    @field_validator('image_url')
     @classmethod
     def valid_url(cls, value):
         return document_url(value)
@@ -63,3 +104,18 @@ class QCBatchInput(BaseModel):
         if len(set(ids)) != len(ids):
             raise ValueError('Một phiếu nhập NVL chỉ được xuất hiện một lần trong lô QC.')
         return values
+
+
+class UploadInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0, le=5*1024**4)
+    modified: int = Field(ge=0)
+    mime: str = Field(default='application/octet-stream', pattern=r'^[\w.+-]+/[\w.+-]+$')
+
+    @field_validator('name')
+    @classmethod
+    def safe_name(cls, value):
+        if any(ord(char)<32 for char in value) or '/' in value or '\\' in value:
+            raise ValueError('Tên file không hợp lệ.')
+        return value
