@@ -1,7 +1,7 @@
 (() => {
   const $=id=>document.getElementById(id), admin=window.QCTemplateAdmin;
   const el=(tag,text)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;return node;};
-  let fields=[], snapshot=null, sourceHash=null, sources={}, pick=null, epoch=0, dirty=false;
+  let fields=[], snapshot=null, sourceHash=null, sources={}, pick=null, epoch=0, dirty=false,signatureLocked=false;
   const frozen=()=>!!admin.selected()?.approved_at;
   function mark(){
     const nodes=$('mappingPreview').querySelectorAll('[data-cell]');
@@ -13,7 +13,9 @@
     }
   }
   function selectedCell(cell){
-    if(frozen()||admin.busy()||!pick)return;
+    if(admin.busy()||!pick)return;
+    if(pick.signature){if(signatureLocked)return;$(pick.signature).value=cell;dirty=true;$('mappingPick').textContent='Đã chọn '+cell+' cho vùng chữ ký.';return;}
+    if(frozen())return;
     fields[pick.index][pick.key]=cell;fields[pick.index].reviewed=false;dirty=true;renderFields();mark();
     $('mappingPick').textContent='Đã chọn '+cell+' cho '+fields[pick.index].name;
   }
@@ -59,6 +61,8 @@
     $('mappingStatus').textContent=row?.approved_at?'Đã phê duyệt '+row.approved_at+' · '+row.approved_by+' · '+row.status+' · Bất biến; thay đổi cần phiên bản mới.':'Kiểm tra mapping rồi Lưu để phê duyệt và kích hoạt ngay. Thay đổi trường/tiêu chí tại Google Sheets rồi tải lại.';
     for(const id of ['suggestMapping','saveMapping'])$(id).disabled=frozen();
     $('activateTemplate').disabled=!frozen()||row?.status==='ACTIVE';
+    $('signatureCell').disabled=$('signatureEndCell').disabled=signatureLocked;
+    $('approveSignatureLocation').disabled=!frozen()||signatureLocked;
   }
   async function load(){
     const current=++epoch,row=admin.selected();pick=null;dirty=false;$('mappingPanel').hidden=!row;
@@ -68,6 +72,8 @@
       if(current!==epoch)return;
       admin.update(data);snapshot=data.snapshot;sourceHash=data.source_hash;sources=data.sources;
       fields=(data.mapping?.fields||[]).map(clean);renderFields();renderPreview();$('mappingWarnings').textContent='';
+      $('signatureCell').value=data.mapping?.signature_cell||'';$('signatureEndCell').value=data.mapping?.signature_end_cell||'';
+      signatureLocked=!!data.mapping?.signature_cell;renderFields();
     }catch(error){admin.message(error.message);}
   }
   function clean(field){return Object.fromEntries(['id','name','kind','cell','source','data_type','unit','required','allow_na','standard_cell','assessment_cell','reviewed'].map(key=>[key,field[key]??({unit:'',data_type:'text',required:true,allow_na:false,reviewed:false}[key]??null)]));}
@@ -80,11 +86,13 @@
     const data=await refreshAfter({path:'suggest'});
     // Suggestions do not modify the registered template until explicitly saved.
     snapshot=data.snapshot;sourceHash=data.source_hash;sources=data.sources;fields=data.fields.map(clean);dirty=true;
+    signatureLocked=false;$('signatureCell').value=$('signatureEndCell').value='';
     renderFields();renderPreview();$('mappingWarnings').textContent=data.warnings.join(' ');
     admin.message('Đã tải '+fields.length+' trường từ Google Sheets. Kiểm tra rồi Lưu để phê duyệt và kích hoạt.');
   });
   $('saveMapping').onclick=()=>{
-    const body={fields:structuredClone(fields),source_hash:sourceHash};
+    const body={fields:structuredClone(fields),source_hash:sourceHash,
+      signature_cell:$('signatureCell').value.trim().toUpperCase()||null,signature_end_cell:$('signatureEndCell').value.trim().toUpperCase()||null};
     admin.work(async()=>{await refreshAfter({path:'mapping',method:'PUT',body});await load();admin.message('Đã lưu, phê duyệt và kích hoạt template.');});
   };
   function release(path,body={},text='Đã cập nhật template.'){
@@ -95,6 +103,11 @@
   $('deactivateTemplate').onclick=()=>release('status',{status:'INACTIVE'},'Đã ngừng kích hoạt. Hồ sơ cũ giữ nguyên.');
   $('verifyTemplate').onclick=()=>release('verify',{},'Nguồn Google vẫn khớp bản chụp đã lưu.');
   $('newVersion').onclick=()=>admin.newVersion();
+  for(const id of ['signatureCell','signatureEndCell']){$(id).onfocus=()=>{pick={signature:id};$('mappingPick').textContent='Nhấn ô trên preview để chọn vùng chữ ký.';};$(id).oninput=()=>{dirty=true;};}
+  $('approveSignatureLocation').onclick=()=>admin.work(async()=>{
+    await refreshAfter({path:'signature-location',body:{cell:$('signatureCell').value.trim().toUpperCase(),end_cell:$('signatureEndCell').value.trim().toUpperCase()||null}});
+    await load();admin.message('Đã phê duyệt bổ sung vị trí chữ ký; mapping dữ liệu được giữ nguyên.');
+  });
   window.addEventListener('qc-template-selected',load);
   window.addEventListener('qc-template-work-finished',()=>{if(admin.selected())renderFields();});
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});

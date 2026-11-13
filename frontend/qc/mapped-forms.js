@@ -2,23 +2,26 @@
 (() => {
   const legacy=window.QCFormUI,$=id=>document.getElementById(id);
   const el=(tag,text)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;return node;};
-  let entry=null,draft=null,record=null,epoch=0,loading=false,choices=[];
-  async function api(url){
-    const response=await fetch(url,{cache:'no-store'});let body;
+  let entry=null,draft=null,record=null,epoch=0,loading=false,choices=[],recordReadonly=true,canEditRecord=false;
+  async function api(url,options={}){
+    const response=await fetch(url,{cache:'no-store',...options});let body;
     try{body=await response.json();}catch{throw Error('Không đọc được phản hồi máy chủ (HTTP '+response.status+'). Vui lòng thử lại.');}
-    if(!response.ok)throw Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail));
+    if(!response.ok)throw Error(typeof body.detail==='string'?body.detail:(body.detail||[]).map(item=>item.loc?.includes('quantity')?'Số lượng kiểm tra phải là số nguyên dương.':item.msg).join('; ')||'Không thực hiện được yêu cầu.');
     return body;
   }
   const params=()=>new URLSearchParams({check_type:$('checkType').value,object_type:$('objectType').value,object_id:$('objectId').value});
   function mode(){
     const active=!!entry;
-    $('legacyFormSection').hidden=$('legacyEvidenceSection').hidden=active;
+    $('legacyFormSection').hidden=active;$('legacyEvidenceSection').hidden=false;
     $('useLegacyForm').hidden=!active||!!record;
     $('openMappedForm').disabled=!active;
     $('result').readOnly=active;
-    $('mappedSummary').textContent=active?(entry.code+' · v'+entry.version+(draft?' · '+draft.conclusion:' · Chưa nhập kết quả')):'Chọn template đã duyệt hoặc dùng biểu mẫu ERP hiện có.';
+    $('mappedSummary').textContent=active?(entry.code+' · v'+entry.version+(draft?' · '+draft.conclusion+' · '+(draft.confirmation||recordReadonly&&record?.form_data.signer?'Đã ký xác nhận':'Cần ký xác nhận lại'):' · Chưa nhập kết quả')):'Chọn template đã duyệt hoặc dùng biểu mẫu ERP hiện có.';
     $('mappedTemplate').disabled=!!record;
     $('findMappedTemplates').disabled=!!record||loading;
+    $('resignMapped').hidden=!record||!canEditRecord;
+    $('mappedPdf').hidden=!record?.pdf_url;
+    if(record?.pdf_url)$('mappedPdf').href=record.pdf_url;
   }
   async function refresh(){
     if(record)return;
@@ -37,14 +40,18 @@
   function automatic(){
     if(record)return record.form_data.auto_values;
     const values={...entry.context,check_type:$('checkType').value,quantity:$('quantity').value,
-      checked_at:$('checkedAt').value,staff_name:window.NAPACO_USER?.name||'',qc_id:'Cấp mã khi lưu'};
+      checked_at:$('checkedAt').value,staff_name:window.NAPACO_USER?.name||'',qc_id:'Cấp mã khi lưu',
+      qc_note:$('note').value,signer_name:window.NAPACO_USER?.name||'',signed_at:'Xác nhận khi ký'};
     return Object.fromEntries(entry.mapping.fields.filter(field=>field.kind==='ERP').map(field=>[field.id,String(values[field.source]??'')]));
   }
   function edit(){
     if(!entry)return;
-    const readonly=!!record,auto=automatic(),modal=el('dialog');modal.className='qc-dialog mapped-dialog';
+    const readonly=!!record&&recordReadonly,auto=automatic(),modal=el('dialog');modal.className='qc-dialog mapped-dialog';
     const close=el('button','Đóng');close.type='button';close.onclick=()=>modal.close();
     modal.append(el('h2',entry.name+' · '+entry.code+' · v'+entry.version),close);
+    const quantity=el('input'),quantityLabel=el('label','Số lượng kiểm tra *');
+    quantity.type='number';quantity.min='1';quantity.step='1';quantity.required=true;
+    quantity.value=$('quantity').value;quantity.disabled=readonly;quantityLabel.append(quantity);modal.append(quantityLabel);
     modal.addEventListener('close',()=>modal.remove());document.body.append(modal);modal.showModal();
     const context=el('details');context.open=true;context.append(el('summary','Dữ liệu đối tượng từ MySQL'));
     const contextGrid=el('dl');contextGrid.className='mapped-context';
@@ -82,9 +89,24 @@
     const wrap=el('div');wrap.className='table-wrap';wrap.append(table);modal.append(wrap,el('p','Chọn đánh giá theo kết quả kiểm tra. ERP không suy đoán dung sai; N/A không phải Đạt.'));
     const conclusion=el('select');for(const [value,label] of [['','Chọn kết luận'],['PASS','Đạt'],['FAIL','Không đạt'],...(readonly&&draft?.conclusion==='NA'?[['NA','N/A (hồ sơ lịch sử)']]:[])]){const option=el('option',label);option.value=value;conclusion.append(option);}
     conclusion.value=draft?.conclusion||'';conclusion.disabled=readonly;modal.append(el('p','Kết luận'),conclusion);
+    modal.append(el('p','Chữ ký xác nhận nội bộ · không phải chữ ký số có chứng thư số'));
+    const canvas=el('canvas');canvas.width=900;canvas.height=240;canvas.className='qc-signature';canvas.setAttribute('aria-label','Vùng ký xác nhận QC');modal.append(canvas);
+    const pen=canvas.getContext('2d');let strokes=structuredClone(draft?.signature||[]),currentStroke=null;
+    function draw(){pen.clearRect(0,0,900,240);pen.strokeStyle='#183a68';pen.lineWidth=2.5;pen.lineCap='round';for(const stroke of strokes){pen.beginPath();stroke.forEach(([x,y],index)=>pen[index?'lineTo':'moveTo'](x*900,y*240));pen.stroke();}}
+    function invalidateSignature(){if(!readonly){strokes=[];draw();}}
+    for(const input of [quantity,conclusion,...inputs.flatMap(item=>[item.actual,item.assessment,item.note])])input.addEventListener('input',invalidateSignature);
+    function point(event){const box=canvas.getBoundingClientRect();return [Math.max(0,Math.min(1,(event.clientX-box.left)/box.width)),Math.max(0,Math.min(1,(event.clientY-box.top)/box.height))];}
+    canvas.onpointerdown=event=>{if(readonly||loading)return;event.preventDefault();canvas.setPointerCapture(event.pointerId);currentStroke=[point(event)];strokes.push(currentStroke);};
+    canvas.onpointermove=event=>{if(currentStroke&&strokes.reduce((n,s)=>n+s.length,0)<15000){currentStroke.push(point(event));draw();}};
+    canvas.onpointerup=canvas.onpointercancel=()=>{currentStroke=null;};draw();
+    const signer=record?.form_data.signer;
+    modal.append(el('p',readonly&&signer?'Người ký: '+signer.name+' · '+(signer.email||'')+' · '+signer.signed_at:'Ký bằng phiên Google hiện tại: '+(window.NAPACO_USER?.email||'Cần kết nối Google.')));
+    if(!readonly){const clear=el('button','Xóa và ký lại');clear.type='button';clear.onclick=invalidateSignature;modal.append(clear);}
     const error=el('p');error.className='error';modal.append(error);
-    if(!readonly){const apply=el('button','Áp dụng kết quả');apply.type='button';apply.onclick=()=>{
+    if(!readonly){const apply=el('button','Ký xác nhận và áp dụng');apply.type='button';apply.onclick=async()=>{
       try{
+        if(!quantity.reportValidity())throw Error('Hãy nhập số lượng kiểm tra là số nguyên dương.');
+        $('quantity').value=quantity.value;
         const answers=inputs.map(({field,actual,assessment,note})=>{
           if(field.required&&!assessment.value)throw Error('Cần đánh giá '+field.name);
           if(field.required&&assessment.value!=='NA'&&!actual.value.trim())throw Error('Thiếu kết quả '+field.name);
@@ -94,15 +116,23 @@
         if(!evaluations.some(value=>value==='PASS'||value==='FAIL'))throw Error('Cần ít nhất một tiêu chí Đạt hoặc Không đạt để kết luận.');
         const expected=evaluations.includes('FAIL')?'FAIL':'PASS';
         if(conclusion.value!==expected)throw Error('Kết luận phải khớp đánh giá các tiêu chí áp dụng.');
-        draft={template_id:entry.id,source_hash:entry.source_hash,mapping_hash:entry.mapping_hash,answers,conclusion:conclusion.value};
-        $('result').value={PASS:'OK',FAIL:'NG',NA:'N/A'}[draft.conclusion];mode();modal.close();
-      }catch(reason){error.textContent=reason.message;}
+        if(!strokes.some(stroke=>stroke.length>=2&&new Set(stroke.map(p=>p.join(','))).size>=2))throw Error('Hãy ký xác nhận trước khi áp dụng.');
+        if(!entry.mapping.signature_cell)throw Error('Quản lý cần phê duyệt vùng chữ ký của template trước.');
+        const next={template_id:entry.id,source_hash:entry.source_hash,mapping_hash:entry.mapping_hash,answers,conclusion:conclusion.value,signature:strokes};
+        const payload={...Object.fromEntries(new FormData($('qcForm'))),form:null,mapped_form:next,result:expected==='PASS'?'OK':'NG'};
+        const currentEpoch=epoch;loading=true;apply.disabled=true;
+        const confirmed=await api('/api/qc/signatures/confirm'+(record?'?qc_id='+encodeURIComponent(record.id):''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(currentEpoch!==epoch)return;
+        draft={...next,confirmation:confirmed.confirmation};
+        $('result').value=expected==='PASS'?'OK':'NG';mode();modal.close();
+      }catch(reason){error.textContent=reason.message;}finally{loading=false;apply.disabled=false;mode();}
     };modal.append(apply);}
     modal.append(el('h3','Bản chụp template · chỉ đọc'),preview);
   }
   window.QCFormUI={...legacy,
     async init(){
       await legacy.init();$('openMappedForm').onclick=edit;$('findMappedTemplates').onclick=refresh;
+      $('resignMapped').onclick=()=>{if(!canEditRecord)return;recordReadonly=false;if(draft){draft.signature=[];draft.confirmation=null;}edit();};
       $('mappedTemplate').onchange=async()=>{
         const id=$('mappedTemplate').value;entry=draft=null;legacy.reset();mode();if(!id)return;
         const current=++epoch;loading=true;mode();
@@ -112,19 +142,24 @@
       };
       $('useLegacyForm').onclick=()=>{entry=draft=null;$('mappedTemplate').value='';$('result').value='';mode();};
     },
-    reset(){epoch++;entry=draft=record=null;choices=[];loading=false;legacy.reset();$('mappedFormSection').hidden=false;$('mappedTemplate').replaceChildren(el('option','Chọn template đã duyệt'));$('mappedTemplate').options[0].value='';mode();},
+    reset(){epoch++;entry=draft=record=null;choices=[];loading=false;recordReadonly=true;canEditRecord=false;legacy.reset();$('mappedFormSection').hidden=false;$('mappedTemplate').replaceChildren(el('option','Chọn template đã duyệt'));$('mappedTemplate').options[0].value='';mode();},
     load(item,viewOnly){
       if(!item.template_id){entry=draft=record=null;legacy.load(item,viewOnly);$('mappedFormSection').hidden=true;mode();return;}
-      legacy.reset();record=item;const saved=item.form_data;entry={...saved.template,id:saved.template.id,context:saved.context};draft={...saved.input,template_id:item.template_id};
+      legacy.reset();record=item;recordReadonly=true;canEditRecord=!viewOnly;const saved=item.form_data;entry={...saved.template,id:saved.template.id,context:saved.context};
+      if(!entry.mapping.signature_cell&&item.signature_mapping_extension){entry.mapping=item.signature_mapping_extension;entry.mapping_hash=item.signature_mapping_hash;}
+      draft={...saved.input,template_id:item.template_id};
+      legacy.evidenceRecord(item);
       $('mappedFormSection').hidden=false;$('mappedTemplate').replaceChildren(el('option',entry.code+' · v'+entry.version));mode();$('openMappedForm').disabled=false;
     },
-    payload(){if(entry){if(!draft)throw Error('Hãy nhập kết quả theo template đã chọn.');return {form:null,parent_folder_id:null,mapped_form:draft};}return legacy.payload();},
-    files(){return entry?[]:legacy.files();},
-    async uploadRecords(records,files,onDone){const indices=records.map((row,index)=>row.template_id?-1:index).filter(index=>index>=0);if(!indices.length){onDone?.();return true;}return legacy.uploadRecords(indices.map(index=>records[index]),indices.map(index=>files[index]),onDone);},
+    payload(){if(entry){if(!draft?.confirmation)throw Error('Hãy ký xác nhận lại nội dung QC trước khi lưu.');return {...legacy.payload(),form:null,mapped_form:draft};}return legacy.payload();},
+    files(){return legacy.files();},
+    async uploadRecords(records,files,onDone){return legacy.uploadRecords(records,files,onDone);},
     busy(){return loading||legacy.busy();},
     invalidate(discard=false){
       if(discard){epoch++;entry=draft=record=null;loading=false;legacy.invalidate(true);mode();queueMicrotask(refresh);}
-      else if(!entry)legacy.invalidate();
+      else if(entry){if(draft){draft.confirmation=null;draft.signature=[];}if(record&&canEditRecord)recordReadonly=false;mode();}
+      else legacy.invalidate();
     }
   };
+  window.addEventListener('qc-evidence-updated',event=>{if(record?.id===event.detail.id){record=event.detail;mode();if(record.drive_folder_id){$('openImage').href='https://drive.google.com/drive/folders/'+encodeURIComponent(record.drive_folder_id);$('openImage').hidden=false;}}});
 })();

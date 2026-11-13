@@ -15,6 +15,7 @@ from app.modules.qc.models import QualityCheck
 from app.modules.qc.materials import eligibility
 from app.modules.qc import evidence, forms, drive_bundle
 from app.auth.models import User
+from app.core.performance import measure
 
 ALLOWED = {'QC NVL': {'NVL'}, 'QC ĐẦU CA': {'SETUP'},
            'QC GIỮA CA': {'HUT', 'CAT', 'EB'}, 'QC CUỐI CA': {'HUT', 'CAT', 'EB'}}
@@ -103,16 +104,34 @@ def detail_record(db, obj):
     result['staff_name'] = staff_name(db, obj.staff_id)
     result['form_document_id'] = forms.document_id(obj.id) if obj.form_data and not obj.template_id else None
     result['evidence'] = ('https://drive.google.com/drive/folders/'+obj.drive_folder_id) if obj.drive_folder_id else obj.image_url
-    task = (obj.source or {}).get(drive_bundle.JOB) if obj.form_data else (obj.source or {}).get(evidence.TASK)
-    result['evidence_pending'] = bool(task and task.get('pending', True))
+    task = (obj.source or {}).get(drive_bundle.JOB) or (obj.source or {}).get(evidence.TASK)
+    remaining = set((task or {}).get('expected_uploads', [])) - set((task or {}).get('completed_uploads', []))
+    result['pdf_pending'] = bool(task and task.get('pending', True))
+    result['evidence_remaining'] = len(remaining)
+    result['evidence_pending'] = bool(result['pdf_pending'] or remaining)
     result['evidence_error'] = task.get('error', 'Bằng chứng đang chờ xử lý trên Drive.') if task else ''
+    result['evidence_step'] = (task or {}).get('step', '')
+    result['pdf_url'] = '/api/qc/' + obj.id + '/pdf' if task and task.get('pdf_revision') and not task.get('pending') else None
+    if obj.template_id and not obj.form_data['template']['mapping'].get('signature_cell'):
+        from app.modules.qc.template_models import QCTemplate
+        current = db.get(QCTemplate, obj.template_id)
+        saved = obj.form_data['template']
+        if (current and current.approved_at and current.source_hash == saved['source_hash'] and
+                current.field_mapping.get('fields') == saved['mapping'].get('fields')):
+            result['signature_mapping_extension'] = current.field_mapping
+            from app.modules.qc.mapping import digest
+            result['signature_mapping_hash'] = digest(current.field_mapping)
     return result
 
 
+@measure('qc.finish_drive_after_commit')
 def finish_evidence(db, user, result, batch):
     records = result['items'] if batch else [result]
     completed = []
     for item in records:
+        if item.get('template_id'):
+            completed.append(detail_record(db, db.get(QualityCheck, item['id'])))
+            continue  # Durable pending job; the UI invokes bundle/retry after showing QC_ID.
         if not item.get('evidence_pending'):
             completed.append(item)
             continue
@@ -125,7 +144,7 @@ def finish_evidence(db, user, result, batch):
 
 
 def apply_values(db, obj, data, identifier, lsx, user):
-    values = data.model_dump(exclude={'version', 'form', 'mapped_form', 'parent_folder_id'})
+    values = data.model_dump(exclude={'version', 'form', 'mapped_form', 'parent_folder_id', 'evidence_manifest'})
     stamp = values['checked_at']
     values['checked_at'] = stamp.astimezone(TIMEZONE).replace(tzinfo=None) if stamp.tzinfo else stamp
     values['checked_at'] = values['checked_at'].replace(microsecond=0)
@@ -135,9 +154,9 @@ def apply_values(db, obj, data, identifier, lsx, user):
         setattr(obj, key, value)
     if data.mapped_form:
         from app.modules.qc.template_runtime import filled
-        obj.form_data = filled(db, user, data, obj.id, lsx)
+        obj.form_data = filled(db, user, data, obj.id, lsx, existing=obj if obj.template_id else None)
         obj.template_id = data.mapped_form.template_id
-        obj.standard_url = 'https://docs.google.com/spreadsheets/d/' + obj.form_data['template']['spreadsheet_id'] + '/edit'
+        # Keep the existing meaning/value of Tieu_Chuan_STD on mapped records.
         return
     if data.form:
         saved_definition = (obj.form_data or {}).get('definition')
@@ -167,9 +186,10 @@ def create(db, user, data, request_id):
     return create_records(db, user, [data], request_id, batch=False)
 
 
+@measure('qc.create_total')
 def create_records(db, user, items, request_id, batch=True):
     # Preserve existing legacy idempotency hashes when the optional new branch is absent.
-    excluded = lambda item: {'version'} | ({'mapped_form'} if item.mapped_form is None else set())
+    excluded = lambda item: {'version'} | ({'mapped_form'} if item.mapped_form is None else set()) | ({'evidence_manifest'} if not item.evidence_manifest else set())
     contents = [item.model_dump(mode='json', exclude=excluded(item)) for item in items]
     raw = json.dumps(contents, sort_keys=True) if batch else items[0].model_dump_json(exclude=excluded(items[0]))
     digest = hashlib.sha256(raw.encode()).hexdigest()
@@ -185,11 +205,11 @@ def create_records(db, user, items, request_id, batch=True):
         db.commit()
         return finish_evidence(db, user, result, batch)
     for data in items:
-        if data.mapped_form and (data.form or data.parent_folder_id or data.image_url):
-            raise HTTPException(422, 'Template mapping chỉ lưu MySQL; không gửi form ký, thư mục hoặc bằng chứng.')
+        if data.mapped_form and (data.form or data.image_url):
+            raise HTTPException(422, 'Không trộn form cũ hoặc liên kết bằng chứng với hồ sơ template mới.')
         if data.check_type == 'QC NVL' and not data.form and not data.mapped_form:
             raise HTTPException(422, 'Phiếu IQC mới cần biểu mẫu ERP đã nhập và ký.')
-        if data.form:
+        if data.form or data.mapped_form:
             if not data.parent_folder_id:
                 raise HTTPException(422, 'Hãy chọn thư mục cha cho hồ sơ QC.')
             token = drive_bundle.access_token(db, user)
@@ -216,8 +236,8 @@ def create_records(db, user, items, request_id, batch=True):
         identifier, lsx = resolved[(data.object_type, data.object_id)]
         obj = QualityCheck(id=prefix + str(highest+offset).zfill(2), staff_id=user.id, ncr_id='', source={})
         apply_values(db, obj, data, identifier, lsx, user)
-        if data.form:
-            drive_bundle.schedule(obj, user, data.parent_folder_id)
+        if data.form or data.mapped_form:
+            drive_bundle.schedule(obj, user, data.parent_folder_id, data.evidence_manifest)
         elif not data.mapped_form:
             evidence.schedule(obj, user)
         db.add(obj)
@@ -225,35 +245,47 @@ def create_records(db, user, items, request_id, batch=True):
         results.append({**record(obj), 'staff_name':user.name, 'evidence':obj.image_url,
                         'evidence_pending':bool((obj.source or {}).get(evidence.TASK) or (obj.source or {}).get(drive_bundle.JOB)), 'evidence_error':''})
         db.add(Audit(user_id=user.id, action='QC_CREATE', entity_id=obj.id,
-                     details={'object_type':obj.object_type, 'object_id':obj.object_id}))
+                     details={'object_type':obj.object_type, 'object_id':obj.object_id,
+                              'signing_hash':(obj.form_data or {}).get('signer',{}).get('content_hash')}))
     sequence.value = highest + len(items)
     result = {'items':results} if batch else results[0]
     request.result = result
-    db.commit()
+    with measure('qc.mysql_commit'):
+        db.commit()
     return finish_evidence(db, user, result, batch)
 
 
+@measure('qc.update_total')
 def update(db, user, identifier, data):
     obj = db.scalar(select(QualityCheck).where(QualityCheck.id == identifier).with_for_update())
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
-    if obj.template_id or data.mapped_form:
-        raise HTTPException(409, 'Hồ sơ template đã lưu được giữ nguyên bản chụp. Bước 2 chỉ hỗ trợ tạo và xem lại, không chuyển đổi hoặc ghi đè hồ sơ cũ.')
+    if bool(obj.template_id) != bool(data.mapped_form):
+        raise HTTPException(409, 'Không chuyển đổi giữa hồ sơ cũ và hồ sơ template.')
+    if obj.template_id and (data.object_id != obj.object_id or data.object_type != obj.object_type or data.check_type != obj.check_type):
+        raise HTTPException(422, 'Không chuyển đối tượng hoặc loại kiểm tra của hồ sơ template đã lưu.')
     if not data.version or data.version != record(obj)['version']:
         raise HTTPException(409, 'Phiếu đã thay đổi. Hãy mở lại trước khi sửa.')
     object_id, lsx = resolve_object(db, data, existing=obj)
-    if data.form and not obj.drive_folder_id:
+    previous_signer = (obj.form_data or {}).get('signer',{})
+    if (data.form or data.mapped_form) and not obj.drive_folder_id:
         if not data.parent_folder_id:
             raise HTTPException(422, 'Hãy chọn thư mục cha cho hồ sơ QC.')
         drive_bundle.in_scope(db, drive_bundle.access_token(db, user), data.parent_folder_id, writable=True)
     apply_values(db, obj, data, object_id, lsx, user)
-    if data.form:
-        drive_bundle.schedule(obj, user, data.parent_folder_id)
+    if data.form or data.mapped_form:
+        drive_bundle.schedule(obj, user, data.parent_folder_id, data.evidence_manifest)
     else:
         evidence.schedule(obj, user)
     db.flush()
-    db.add(Audit(user_id=user.id, action='QC_EDIT', entity_id=obj.id, details={'object_type':obj.object_type, 'object_id':obj.object_id}))
-    db.commit()
+    db.add(Audit(user_id=user.id, action='QC_EDIT', entity_id=obj.id, details={
+        'object_type':obj.object_type,'object_id':obj.object_id,
+        'previous_signing_hash':previous_signer.get('content_hash'),
+        'signing_hash':(obj.form_data or {}).get('signer',{}).get('content_hash')}))
+    with measure('qc.mysql_commit'):
+        db.commit()
+    if data.mapped_form:
+        return detail_record(db, obj)
     if data.form:
         drive_bundle.prepare(db, user, identifier)
     elif (obj.source or {}).get(evidence.TASK):

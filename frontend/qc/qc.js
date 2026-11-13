@@ -96,7 +96,7 @@
     if(!$('qcForm').reportValidity())throw Error('Hãy kiểm tra các trường bắt buộc; số lượng phải là số nguyên dương.');
     const payload={...Object.fromEntries(new FormData($('qcForm'))),...window.QCFormUI.payload()};
     if(!payload.mapped_form && payload.check_type==='QC NVL' && (!selected||selected.form_data) && (!payload.form||!payload.form.signature.length))throw Error('Hãy nhập và ký biểu mẫu QC NVL.');
-    if(payload.form && !selected?.drive_folder_id && !payload.parent_folder_id)throw Error('Hãy mở Drive và chọn thư mục cha để lưu hồ sơ QC.');
+    if((payload.form||payload.mapped_form) && !selected?.drive_folder_id && !payload.parent_folder_id)throw Error('Hãy mở Drive và chọn thư mục cha để lưu hồ sơ QC.');
     if(!selected && drafts.some(draft=>draft.payload.object_id.toLowerCase()===payload.object_id.toLowerCase()))throw Error('Phiếu nhập này đã có trong danh sách chờ.');
     return payload;
   }
@@ -138,6 +138,7 @@
         method:selected?'PUT':'POST',headers:{'Content-Type':'application/json','Idempotency-Key':requestToken},body});
       if(selected){
         selected=result;$('imageUrl').value=result.image_url||'';safeLink($('openImage'),result.evidence);
+        window.QCFormUI.load(result,viewOnly);
         $('message').textContent='Đã lưu phiếu '+result.id+'.';
         if(result.evidence_pending)$('formError').textContent='Phiếu đã lưu, bằng chứng chưa xử lý xong: '+result.evidence_error+' Bấm Lưu phiếu để thử lại.';
       }
@@ -173,11 +174,8 @@
         const tr=element('tr');
         const whole=integerValue(row.quantity);
         for(const value of [row.id,row.checked_at?.replace('T',' '),row.check_type,row.object_type,row.production_order_id,whole?BigInt(whole).toLocaleString('vi-VN'):'',row.result,row.staff_name])tr.append(element('td',value??''));
-        for(const [value,label] of [[row.standard_url,'Mở tiêu chuẩn'],[row.evidence,'Mở bằng chứng']]){
+        for(const [value,label] of [[row.evidence,'Mở bằng chứng']]){
           const cell=element('td'),link=element('a',label);link.target='_blank';link.rel='noopener noreferrer';safeLink(link,value);cell.append(link);tr.append(cell);
-          if(label==='Mở tiêu chuẩn' && /^QC_[A-Z0-9_]+$/.test(value||'')){
-            link.hidden=true;const formButton=element('button',value+' · Xem biểu mẫu');formButton.type='button';formButton.onclick=()=>openDetail(row.id);cell.append(formButton);
-          }
           if(label==='Mở bằng chứng' && row.evidence_pending)cell.append(element('p','Chờ xử lý Drive · mở chi tiết để thử lại'));
         }
         const action=element('td'),button=element('button','Xem chi tiết');button.type='button';button.onclick=()=>openDetail(row.id);action.append(button);tr.append(action);return tr;
@@ -200,7 +198,7 @@
       $('quantity').value=integerValue(record.quantity);
       $('checkedAt').value=record.checked_at||'';$('lsx').value=record.production_order_id||'';$('staff').value=record.staff_name||'Chưa xác định';$('ncr').value=record.ncr_id||'';
       $('editorHeading').textContent='Phiếu '+record.id;$('closeEditor').hidden=false;
-      viewOnly=!!record.template_id||!user.permissions.includes('QC_EDIT');
+      viewOnly=!user.permissions.includes('QC_EDIT');
       for(const node of $('qcForm').querySelectorAll('input,select,textarea,button'))node.disabled=viewOnly;
       $('closeEditor').disabled=false;$('save').hidden=viewOnly;
       $('topActions').hidden=false;$('saveTop').hidden=viewOnly;$('closeEditorTop').disabled=false;

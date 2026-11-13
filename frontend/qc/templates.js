@@ -5,7 +5,9 @@
   const element = (tag, text) => {const node = document.createElement(tag); if (text != null) node.textContent = text; return node;};
   function message(text) {$('message').textContent = text;}
   async function api(url, options = {}) {
-    const response = await fetch(url, {cache:'no-store', ...options});
+    const started=performance.now();let response;
+    try {
+    response = await fetch(url, {cache:'no-store', ...options});
     let body;
     try {body = await response.json();}
     catch {throw Error('Không đọc được phản hồi máy chủ (HTTP ' + response.status + '). Vui lòng thử lại.');}
@@ -13,16 +15,23 @@
     if (!response.ok) throw Error(typeof body.detail === 'string' ? body.detail :
       (body.detail || []).map(item => item.msg).join('; ') || 'Không thực hiện được yêu cầu.');
     return body;
+    } finally {
+      console.info('QC_TEMPLATE_PERF',{operation:options.method||'GET',step:url.split('?')[0].split('/').pop(),ms:Math.round(performance.now()-started),status:response?.status||0,trace:response?.headers.get('X-QC-Trace')||''});
+    }
   }
-  async function work(action) {
+  async function work(action, label='Đang xử lý template. Vui lòng chờ hệ thống hoàn tất…') {
     if (busy) return;
     busy = true;
+    const started=performance.now();
+    const main=document.querySelector('main'),overlay=$('templateBusy');
+    const priorInert=main.inert;main.inert=true;main.setAttribute('aria-busy','true');
+    overlay.hidden=false;overlay.textContent=label;
     const controls = [...document.querySelectorAll('button,input,select')];
     const disabled = controls.map(node => node.disabled);
     controls.forEach(node => {node.disabled = true;});
     message('Đang xử lý…');
     try {await action();} catch (error) {message(error.message);}
-    finally {controls.forEach((node, index) => {node.disabled = disabled[index];}); busy = false; pagination(); syncLock(); window.dispatchEvent(new Event('qc-template-work-finished'));}
+    finally {overlay.hidden=true;main.inert=priorInert;main.removeAttribute('aria-busy');controls.forEach((node, index) => {node.disabled = disabled[index];}); busy = false; pagination(); syncLock(); window.dispatchEvent(new Event('qc-template-work-finished'));console.info('QC_TEMPLATE_PERF',{operation:'ui.work',ms:Math.round(performance.now()-started)});}
   }
   let hasMore = false;
   function pagination() {$('previous').disabled = busy || page <= 1; $('next').disabled = busy || !hasMore;}
@@ -104,7 +113,7 @@
     update(row){selected={...selected,...row};syncLock();},
     refresh:()=>load(1,query),
     newVersion(){
-      if(!selected)return;
+      if(busy||!selected)return;
       const prior=selected;edit(null);
       form.elements.form_code.value=prior.form_code.replace(/_V\d+$/, '')+'_V'+(prior.version+1);
       form.elements.version.value=prior.version+1;form.elements.form_name.value=prior.form_name;

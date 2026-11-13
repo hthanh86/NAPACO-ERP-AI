@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from urllib.parse import urlsplit
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, PrivateAttr
 from typing import Annotated
 
 
@@ -70,6 +70,16 @@ class MappedFormInput(BaseModel):
     mapping_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
     answers: list[MappedAnswer] = Field(min_length=1, max_length=200)
     conclusion: Literal['PASS','FAIL']
+    signature: list[Stroke] = Field(default_factory=list, max_length=100)
+    confirmation: str | None = Field(default=None, max_length=4096)
+    _signer: dict | None = PrivateAttr(default=None)
+
+    @field_validator('signature')
+    @classmethod
+    def bounded_signature(cls, strokes):
+        if sum(map(len, strokes)) > 15000:
+            raise ValueError('Chữ ký vượt giới hạn 15000 điểm.')
+        return strokes
 
 
 class QCInput(BaseModel):
@@ -87,6 +97,14 @@ class QCInput(BaseModel):
     form: FormInput | None = None
     mapped_form: MappedFormInput | None = None
     parent_folder_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,255}$')
+    evidence_manifest: list['UploadInput'] = Field(default_factory=list, max_length=500)
+
+    @field_validator('quantity', mode='before')
+    @classmethod
+    def required_quantity(cls, value):
+        if isinstance(value, str) and not value.strip():
+            raise ValueError('Hãy nhập số lượng kiểm tra là số nguyên dương.')
+        return value
 
     @field_validator('quantity')
     @classmethod
@@ -137,3 +155,7 @@ class UploadInput(BaseModel):
         if any(ord(char)<32 for char in value) or '/' in value or '\\' in value:
             raise ValueError('Tên file không hợp lệ.')
         return value
+
+
+QCInput.model_rebuild()
+QCBatchInput.model_rebuild()

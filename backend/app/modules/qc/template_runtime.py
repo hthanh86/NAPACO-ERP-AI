@@ -89,13 +89,39 @@ def typed(value, kind, label):
         raise HTTPException(422, 'Sai kiểu dữ liệu ở tiêu chí: ' + label) from None
 
 
-def filled(db, user, data, qc_id, lsx):
-    values, product_ids = context(db, data.object_type, data.object_id, lsx)
-    row = released(db, data.mapped_form.template_id, data.check_type, data.object_type, product_ids, lock=True)
+def filled(db, user, data, qc_id, lsx, existing=None):
+    if existing:
+        saved = existing.form_data
+        if (data.mapped_form.template_id != existing.template_id or data.object_id != existing.object_id or
+                data.object_type != existing.object_type or data.check_type != existing.check_type):
+            raise HTTPException(422, 'Không chuyển đối tượng hoặc phiên bản template của phiếu đã lưu.')
+        values, product_ids = deepcopy(saved['context']), set()
+        definition = deepcopy(saved['template'])
+        # An unsigned Step 2 record can receive the separately approved signature extension.
+        if not definition['mapping'].get('signature_cell'):
+            current = db.get(QCTemplate, existing.template_id)
+            if (current and current.approved_at and current.source_hash == definition['source_hash'] and
+                    current.field_mapping.get('fields') == definition['mapping'].get('fields')):
+                definition['mapping'] = deepcopy(current.field_mapping)
+                definition['mapping_hash'] = mapping.digest(current.field_mapping)
+    else:
+        values, product_ids = context(db, data.object_type, data.object_id, lsx)
+        row = released(db, data.mapped_form.template_id, data.check_type, data.object_type, product_ids, lock=True)
+        definition = {'id':row.id,'code':row.form_code,'version':row.version,'name':row.form_name,
+            'spreadsheet_id':row.spreadsheet_id,'sheet_id':row.sheet_id,'source_hash':row.source_hash,
+            'mapping_hash':mapping.digest(row.field_mapping),'approved_by':row.approved_by,
+            'approved_at':row.approved_at.isoformat(),'mapping':deepcopy(row.field_mapping),'snapshot':deepcopy(row.source_snapshot)}
     entered = data.mapped_form
-    if entered.source_hash != row.source_hash or entered.mapping_hash != mapping.digest(row.field_mapping):
+    if entered.source_hash != definition['source_hash'] or entered.mapping_hash != definition['mapping_hash']:
         raise HTTPException(409, 'Template/mapping đã khác bản đang nhập. Hãy chọn lại template.')
-    fields = row.field_mapping['fields']
+    if not entered._signer:
+        raise HTTPException(403, 'Chưa có xác nhận chữ ký hợp lệ từ phiên Google hiện tại.')
+    from app.modules.qc.signing import context_hash
+    if entered._signer.get('context_hash')!=context_hash(values):
+        raise HTTPException(409,'Thông tin NVL/PO đã thay đổi sau khi ký. Hãy tải lại và ký lại trước khi lưu.')
+    if not definition['mapping'].get('signature_cell'):
+        raise HTTPException(422, 'Quản lý cần xác định và phê duyệt vị trí chữ ký trên template trước khi lưu.')
+    fields = definition['mapping']['fields']
     criteria = [field for field in fields if field['kind'] == 'INPUT']
     answers = {answer.id:answer for answer in entered.answers}
     if len(answers) != len(entered.answers) or set(answers) != {field['id'] for field in criteria}:
@@ -124,17 +150,16 @@ def filled(db, user, data, qc_id, lsx):
     if entered.conclusion != conclusion or data.result != {'PASS':'OK','FAIL':'NG'}[conclusion]:
         raise HTTPException(422, 'Kết luận phải khớp đánh giá các tiêu chí áp dụng.')
     values.update(qc_id=qc_id, check_type=data.check_type, checked_at=serialized(data.checked_at),
-                  quantity=serialized(data.quantity), staff_name=user.name)
+                  quantity=serialized(data.quantity), staff_name=user.name,qc_note=data.note,
+                  conclusion='Đạt' if conclusion=='PASS' else 'Không đạt',signer_name=user.name,signed_at=entered._signer['signed_at'])
     auto = {field['id']:str(values.get(field['source'], '')) for field in fields if field['kind'] == 'ERP'}
     missing = [field['name'] for field in fields if field['kind'] == 'ERP' and field['required'] and not auto[field['id']]]
     if missing:
         raise HTTPException(422, 'MySQL chưa có dữ liệu bắt buộc: ' + ', '.join(missing))
-    return {'kind':'google_template', 'template':{'id':row.id,'code':row.form_code,'version':row.version,
-        'name':row.form_name,'spreadsheet_id':row.spreadsheet_id,'sheet_id':row.sheet_id,
-        'source_hash':row.source_hash,'mapping_hash':mapping.digest(row.field_mapping),
-        'approved_by':row.approved_by,'approved_at':row.approved_at.isoformat(),
-        'mapping':deepcopy(row.field_mapping),'snapshot':deepcopy(row.source_snapshot)},
-        'input':{'answers':normalized,'conclusion':conclusion}, 'auto_values':auto, 'context':values}
+    signer = {k:v for k,v in entered._signer.items() if k != 'session'}
+    return {'kind':'google_template','template':definition,
+        'input':{'answers':normalized,'conclusion':conclusion,'signature':entered.signature},
+        'signer':signer,'auto_values':auto,'context':values}
 
 
 def editor_user(user=Depends(current_user), db=Depends(get_db)):

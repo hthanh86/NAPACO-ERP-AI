@@ -19,9 +19,10 @@ SOURCES = {
     'esd':'ESD (danh mục NVL)', 'thickness':'Độ dày đặt (danh mục NVL gắn PO)',
     'width':'Khổ rộng đặt (danh mục NVL gắn PO)', 'po_quantity':'Số lượng đặt NVL',
     'received_quantity':'Số lượng nhận NVL',
+    'qc_note':'Ghi chú phiếu QC','conclusion':'Kết luận QC','signer_name':'Người ký xác nhận','signed_at':'Thời điểm ký UTC',
 }
 NVL_SOURCES = set(SOURCES) - {'qc_id','object_id','check_type','object_type','checked_at','quantity',
-                             'staff_name','production_order_id','product_ids','product_names'}
+                             'staff_name','production_order_id','product_ids','product_names','qc_note','conclusion','signer_name','signed_at'}
 
 
 def digest(value):
@@ -82,6 +83,18 @@ def text(data, cell):
     return str(cells(data).get(anchor(data, cell), {}).get('formattedValue', '')).strip()
 
 
+def region(data, start, end=None):
+    r0,c0 = position(anchor(data, start))
+    r1,c1 = position(end or start)
+    anchor(data, end or start)
+    for merge in data.get('merges', []):
+        if merge.get('startRowIndex',0) <= r1 < merge['endRowIndex'] and merge.get('startColumnIndex',0) <= c1 < merge['endColumnIndex']:
+            r1,c1 = merge['endRowIndex']-1,merge['endColumnIndex']-1
+    if r1 < r0 or c1 < c0:
+        raise HTTPException(422, 'Ô cuối vùng chữ ký phải ở bên phải/phía dưới ô đầu.')
+    return r0,c0,r1+1,c1+1
+
+
 class MappingField(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     id: str = Field(pattern=r'^[a-zA-Z][a-zA-Z0-9_]{0,63}$')
@@ -101,6 +114,8 @@ class MappingField(BaseModel):
 class MappingInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     fields: list[MappingField] = Field(min_length=1, max_length=200)
+    signature_cell: str | None = Field(default=None, max_length=5)
+    signature_end_cell: str | None = Field(default=None, max_length=5)
 
 
 def validate(data, mapping, check_type, approve=False):
@@ -151,7 +166,24 @@ def validate(data, mapping, check_type, approve=False):
         raise HTTPException(422, 'Ô tiêu chuẩn đang bị mapping kết quả hoặc ERP ghi đè.')
     if not any(field.kind == 'INPUT' for field in mapping.fields):
         raise HTTPException(422, 'Cần ít nhất một tiêu chí nhập kết quả.')
-    return {'schema_version':1, 'fields':result}
+    validated = {'schema_version':1, 'fields':result}
+    if mapping.signature_cell:
+        cell = anchor(data, mapping.signature_cell)
+        r0,c0,r1,c1 = region(data, cell, mapping.signature_end_cell)
+        for target in occupied | {item['standard_cell'] for item in result if item['standard_cell']}:
+            a,b,x,y = region(data,target)
+            if a < r1 and x > r0 and b < c1 and y > c0:
+                raise HTTPException(422, 'Vùng chữ ký trùng dữ liệu/tiêu chuẩn/đánh giá.')
+        for merge in data.get('merges', []):
+            a,b,x,y = merge.get('startRowIndex',0),merge.get('startColumnIndex',0),merge['endRowIndex'],merge['endColumnIndex']
+            if a < r1 and x > r0 and b < c1 and y > c0 and not (a >= r0 and b >= c0 and x <= r1 and y <= c1):
+                raise HTTPException(422, 'Vùng chữ ký cắt ngang ô gộp. Chọn đủ vùng ô gộp.')
+        validated['signature_cell'] = cell
+        if mapping.signature_end_cell:
+            validated['signature_end_cell'] = address(r1-1,c1-1)
+    elif mapping.signature_end_cell:
+        raise HTTPException(422, 'Cần ô đầu vùng chữ ký.')
+    return validated
 
 
 def normalize(value):
@@ -165,7 +197,9 @@ def suggest(data):
     labels = {'ma qc':'qc_id','qc id':'qc_id','ngay san xuat':'production_date','ngay nhan':'receipt_date',
         'nha cung cap':'supplier_name','don dat':'po_id','nguoi dat':'po_staff_name','ma nvl':'material_id',
         'loai nhua':'resin','ngay kiem tra':'checked_at','so luong kiem tra':'quantity','nguoi kiem tra':'staff_name',
-        'ma phieu qc':'qc_id','kho rong dat':'width','do day dat':'thickness'}
+        'ma phieu qc':'qc_id','kho rong dat':'width','do day dat':'thickness',
+        'ghi chu bo sung':'qc_note','ghi chu':'qc_note','ket luan cua bo phan iqc':'conclusion',
+        'ket luan':'conclusion','nguoi ky':'signer_name','thoi diem ky':'signed_at'}
     def add(kind, cell, name, **kwargs):
         cell = anchor(data, cell)
         if cell in used:

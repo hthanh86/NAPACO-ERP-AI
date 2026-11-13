@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.integrations.google.drive import BASE
 from app.integrations.google.oauth import access_token, google_json
 from app.modules.qc.models import QualityCheck
+from app.core.performance import measure
 
 FOLDER = 'application/vnd.google-apps.folder'
 TASK = 'qc_evidence_task'
@@ -52,6 +53,7 @@ def save_task(obj, task):
     obj.source = {**(obj.source or {}), TASK: task}
 
 
+@measure('drive.process_legacy_evidence')
 def process(db, user, identifier):
     obj = locked(db, identifier)
     task = dict((obj.source or {}).get(TASK) or {})

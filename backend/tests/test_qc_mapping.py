@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import datetime
 from uuid import uuid4
+from cryptography.fernet import Fernet
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select, func
@@ -13,7 +14,18 @@ from app.modules.materials.purchasing.models import FilmPO, FilmLine
 from app.modules.materials.models import FilmMaterial
 from app.modules.materials.receiving.models import FilmReceipt
 from app.modules.qc.materials import receipt_window
-from test_qc import create
+from test_qc import create as legacy_create
+
+pytestmark = pytest.mark.usefixtures('qc_drive')
+
+
+def create(client,data,token=None):
+    if data.get('mapped_form') and not data['mapped_form'].get('confirmation'):
+        data['mapped_form'].setdefault('signature',[[[.1,.1],[.8,.7]]])
+        confirmed=client.post('/api/qc/signatures/confirm',json=data)
+        if confirmed.status_code!=200:return confirmed
+        data['mapped_form']['confirmation']=confirmed.json()['confirmation']
+    return legacy_create(client,data,token)
 
 
 def sheet():
@@ -38,6 +50,11 @@ def fields(reviewed=True):
 
 
 def stage(admin, monkeypatch, reviewed=True):
+    from app.modules.qc import signing
+    secret=Fernet(Fernet.generate_key())
+    monkeypatch.setattr(signing,'cipher',lambda:secret)
+    monkeypatch.setattr(signing,'identity',lambda request,db,user:{'user_id':user.id,'name':user.name,
+        'email':user.email,'google_subject':'test-subject','session':'test-session'})
     source = sheet()
     def read(db,user,identifier,preview=False):
         return {**deepcopy(source),'spreadsheet_id':sheets.spreadsheet_id(identifier)}
@@ -51,7 +68,8 @@ def stage(admin, monkeypatch, reviewed=True):
     proposed=admin.post(base+'/suggest',json={'expected_updated_at':row['updated_at']})
     assert proposed.status_code==200,proposed.text
     saved=admin.put(base+'/mapping',json={'expected_updated_at':row['updated_at'],
-          'source_hash':proposed.json()['source_hash'],'fields':fields(reviewed)})
+          'source_hash':proposed.json()['source_hash'],'fields':fields(reviewed),
+          'signature_cell':'E4','signature_end_cell':'F6'})
     assert saved.status_code==200,saved.text
     return saved.json(),data,source
 
@@ -77,6 +95,7 @@ def nvl(conn, identifier='_TEST_MAPPED_RECEIPT'):
 
 def qc_payload(row, selection, assessment='PASS'):
     return {**selection,'checked_at':datetime.now().isoformat(),'quantity':'2',
+        'parent_folder_id':'mock-parent',
         'result':{'PASS':'OK','FAIL':'NG','NA':'N/A'}[assessment], 'mapped_form':{
             'template_id':row['id'],'source_hash':row['source_hash'],
             'mapping_hash':mapping.digest(row['mapping']),
@@ -116,7 +135,7 @@ def test_save_explicitly_approves_activates_and_freezes_mapping(clients,monkeypa
         assert response.status_code==403,response.text
 
 
-def test_active_matching_mysql_fill_and_history_no_google_or_drive(clients,monkeypatch):
+def test_active_matching_mysql_fill_and_history_defers_google_work(clients,monkeypatch):
     admin,_,conn=clients
     row,_,_=stage(admin,monkeypatch);active=release(admin,row);selection=nvl(conn)
     params=selection
@@ -126,20 +145,20 @@ def test_active_matching_mysql_fill_and_history_no_google_or_drive(clients,monke
     assert entry.json()['context']['width']=='500' and entry.json()['context']['resin']=='PVC'
     def forbidden(*args,**kwargs):raise AssertionError('QC mapped must not contact Google/Drive')
     monkeypatch.setattr(sheets,'first_tab',forbidden);monkeypatch.setattr(drive_bundle,'prepare',forbidden)
-    monkeypatch.setattr(drive_bundle,'schedule',forbidden);monkeypatch.setattr(evidence,'schedule',forbidden)
+    monkeypatch.setattr(evidence,'schedule',forbidden)
     data=qc_payload(row,selection);token=str(uuid4());created=create(admin,data,token)
     assert created.status_code==201,created.text
     saved=created.json();assert create(admin,data,token).json()['id']==saved['id']
     assert saved['template_id']==row['id'] and saved['form_data']['auto_values']['qc']==saved['id']
-    assert saved['form_data']['auto_values']['po_width']=='500' and not saved['evidence_pending']
+    assert saved['form_data']['auto_values']['po_width']=='500' and saved['evidence_pending']
+    assert saved['form_data']['signer']['user_id']=='_TEST_ADMIN'
     # A new version has an independent source and does not alter the saved V1 JSON.
     frozen=deepcopy(saved['form_data'])
     conn.execute(QCTemplate.__table__.update().where(QCTemplate.id==row['id']).values(STATUS='INACTIVE'))
     detail=admin.get('/api/qc/'+saved['id']).json()
     assert detail['form_data']==frozen
-    assert admin.put('/api/qc/'+saved['id'],json={**data,'version':detail['version']}).status_code==409
-    assert admin.post('/api/qc/'+saved['id']+'/bundle').status_code==422
-    assert admin.get('/api/qc/'+saved['id']+'/pdf').status_code==404
+    assert admin.put('/api/qc/'+saved['id'],json={**data,'note':'Changed without signing again','version':detail['version']}).status_code==422
+    assert admin.get('/api/qc/'+saved['id']+'/pdf').status_code==409
 
 
 def test_na_not_pass_and_validation_rolls_back(clients,monkeypatch):

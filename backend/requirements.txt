@@ -25,6 +25,7 @@ pydantic==2.14.3
 pydantic_core==2.50.4
 Pygments==2.21.0
 PyMySQL==1.2.4
+pypdf==7.0.1
 pytest==8.4.2
 reportlab==5.1.0
 SQLAlchemy==2.0.57

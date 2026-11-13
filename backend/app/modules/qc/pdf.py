@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape
 from app.modules.qc.forms import document_id
+from app.core.performance import measure, record
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -29,6 +30,7 @@ class Signature(Flowable):
             self.canv.drawPath(path)
 
 
+@measure('pdf.render_reportlab')
 def render_pdf(obj):
     for name, file in [('QC','DejaVuSans.ttf'), ('QC-Bold','DejaVuSans-Bold.ttf')]:
         if name not in pdfmetrics.getRegisteredFontNames():
@@ -72,4 +74,6 @@ def render_pdf(obj):
         canvas.drawString(28,16,form_id+' | '+snapshot['code'])
         canvas.drawRightString(landscape(A4)[0]-28,16,'Trang '+str(document.page))
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
-    return output.getvalue()
+    content = output.getvalue()
+    record('pdf.output', 0, bytes=len(content))
+    return content

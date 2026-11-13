@@ -41,6 +41,7 @@ def login(payload: Login, request: Request, response: Response, db=Depends(get_d
     db.commit()
     # HTTP localhost only. Production deployment must use HTTPS and Secure cookies.
     response.set_cookie('napaco_session', token, httponly=True, samesite='strict', max_age=8 * 3600)
+    response.delete_cookie('napaco_google_proof')
     return profile(db, user)
 
 
@@ -51,6 +52,7 @@ def logout(request: Request, response: Response, db=Depends(get_db)):
         db.execute(delete(LoginSession).where(LoginSession.token_hash == token_hash(token)))
         db.commit()
     response.delete_cookie('napaco_session')
+    response.delete_cookie('napaco_google_proof')
     return {'ok': True}
 
 

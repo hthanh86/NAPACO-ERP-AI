@@ -91,8 +91,6 @@ def writable_record(db, user, identifier):
     obj = db.get(QualityCheck, identifier)
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
-    if obj.template_id:
-        raise HTTPException(422, 'Bước 2 chưa hỗ trợ PDF, thư mục hoặc upload cho template mapping.')
     if obj.staff_id != user.id:
         require(db, user, 'QC_EDIT')
     return obj
@@ -104,12 +102,22 @@ def prepare_bundle(identifier: str, user=Depends(current_user), db=Depends(get_d
     return service.detail_record(db, drive_bundle.prepare(db, user, identifier))
 
 
+@router.get('/api/qc/{identifier}/completion')
+def completion(identifier: str, user=Depends(current_user), db=Depends(get_db)):
+    # Upload owners need completion status even if their role cannot browse the QC list.
+    return service.detail_record(db,writable_record(db,user,identifier))
+
+
 @router.get('/api/qc/{identifier}/pdf')
 def download_pdf(identifier: str, user=Depends(current_user), db=Depends(get_db)):
     require(db, user, 'QC_VIEW')
     obj = db.get(QualityCheck, identifier)
-    if obj is None or not obj.form_data or obj.template_id:
+    if obj is None or not obj.form_data:
         raise HTTPException(404, 'Phiếu chưa có biểu mẫu ERP.')
+    if obj.template_id:
+        from app.modules.qc.drive_bundle import download_pdf
+        return Response(download_pdf(db,user,obj),media_type='application/pdf',headers={
+            'Content-Disposition':'inline; filename="'+obj.id+'_Bien_Ban_Kiem_Tra.pdf"'})
     try:
         from app.modules.qc.pdf import render_pdf
     except ImportError:
@@ -121,6 +129,29 @@ def download_pdf(identifier: str, user=Depends(current_user), db=Depends(get_db)
 @router.post('/api/qc/{identifier}/uploads')
 def start_upload(identifier: str, data: UploadInput, user=Depends(current_user), db=Depends(get_db)):
     return drive_bundle.start_upload(db, user, writable_record(db, user, identifier), data)
+
+
+@router.post('/api/qc/{identifier}/evidence-plan')
+def plan_evidence(identifier: str, files: list[UploadInput], parent_folder_id: str | None = Query(None,pattern=r'^[A-Za-z0-9_-]{1,255}$'), user=Depends(current_user), db=Depends(get_db)):
+    from app.modules.qc.evidence import reference, locked
+    obj=writable_record(db,user,identifier)
+    if len(files)>500:
+        raise HTTPException(422,'Tối đa 500 file mỗi lần lưu bằng chứng.')
+    if not obj.drive_folder_id and not (obj.source or {}).get(drive_bundle.JOB,{}).get('parent'):
+        token=drive_bundle.access_token(db,user)
+        if parent_folder_id:
+            drive_bundle.in_scope(db,token,parent_folder_id,writable=True)
+            obj=locked(db,identifier)
+            drive_bundle.schedule(obj,user,parent_folder_id,files)
+            db.commit()
+        else:
+            ref=reference(obj.image_url or '')
+            if not ref:
+                raise HTTPException(422,'Hãy chọn thư mục cha trong vùng QC để bổ sung bằng chứng cho phiếu này.')
+            folder=drive_bundle.in_scope(db,token,ref[0],writable=True)
+            obj=locked(db,identifier);obj.drive_folder_id=folder['id'];db.commit()
+    obj=drive_bundle.plan_uploads(db,user,obj.id,files)
+    return service.detail_record(db,obj)
 
 
 @router.put('/api/qc/{identifier}/uploads/chunk')
@@ -188,18 +219,25 @@ def detail(identifier: str, user=Depends(current_user), db=Depends(get_db)):
 
 
 @router.post('/api/qc', status_code=201)
-def create(data: QCInput, idempotency_key: UUID = Header(), user=Depends(current_user), db=Depends(get_db)):
+def create(data: QCInput, request: Request, idempotency_key: UUID = Header(), user=Depends(current_user), db=Depends(get_db)):
     require(db, user, 'QC_CREATE')
+    from app.modules.qc.signing import verify
+    verify(request, db, user, data)
     return service.create(db, user, data, str(idempotency_key))
 
 
 @router.post('/api/qc/batch', status_code=201)
-def create_batch(data: QCBatchInput, idempotency_key: UUID = Header(), user=Depends(current_user), db=Depends(get_db)):
+def create_batch(data: QCBatchInput, request: Request, idempotency_key: UUID = Header(), user=Depends(current_user), db=Depends(get_db)):
     require(db, user, 'QC_CREATE')
+    from app.modules.qc.signing import verify
+    for item in data.items:
+        verify(request, db, user, item)
     return service.create_records(db, user, data.items, str(idempotency_key))
 
 
 @router.put('/api/qc/{identifier}')
-def update(identifier: str, data: QCInput, user=Depends(current_user), db=Depends(get_db)):
+def update(identifier: str, data: QCInput, request: Request, user=Depends(current_user), db=Depends(get_db)):
     require(db, user, 'QC_EDIT')
+    from app.modules.qc.signing import verify
+    verify(request, db, user, data)
     return service.update(db, user, identifier, data)

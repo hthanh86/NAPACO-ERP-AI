@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="/static/qc/qc.css"><link rel="stylesheet" href="/static/qc/templates.css">
 <script defer src="/static/shared/navigation.js"></script><script defer src="/static/qc/sheet-preview.js"></script>
 <script defer src="/static/qc/templates.js"></script><script defer src="/static/qc/template-mapping.js"></script></head>
-<body><main><h1>Quản lý Template QC</h1>
+<body><div id="templateBusy" class="template-busy" role="status" aria-live="polite" hidden></div><main><h1>Quản lý Template QC</h1>
 <p>Đăng ký Google Sheets, kiểm tra mapping rồi Lưu để phê duyệt và kích hoạt phiên bản dùng khi Tạo Phiếu QC.</p>
 <div id="message" role="status" aria-live="polite"></div>
 <section><h2>Danh sách template</h2><form id="search" class="actions">
@@ -31,6 +31,8 @@
 <div id="sheetPreview" class="sheet-preview" tabindex="0" aria-label="Bảng xem trước Google Sheets chỉ đọc"></div></section>
 <section id="mappingPanel" hidden><h2>Mapping và phê duyệt</h2><p id="mappingStatus" role="status"></p>
 <div class="actions"><button type="button" id="suggestMapping">Tải lại từ Google Sheets</button><button type="button" id="saveMapping">Lưu · Phê duyệt và kích hoạt</button><button type="button" id="activateTemplate">Kích hoạt lại</button><button type="button" id="deactivateTemplate">Ngừng kích hoạt</button><button type="button" id="verifyTemplate">Kiểm tra thay đổi nguồn</button><button type="button" id="newVersion">Tạo phiên bản mới</button></div>
+<div class="actions"><label>Ô đầu vùng chữ ký<input id="signatureCell" maxlength="5" placeholder="Chọn ô trên preview"></label><label>Ô cuối vùng chữ ký (nếu nhiều ô)<input id="signatureEndCell" maxlength="5" placeholder="Ví dụ C29"></label><button id="approveSignatureLocation" type="button">Phê duyệt bổ sung vùng chữ ký</button></div>
+<p>Chọn một vùng trống đủ lớn cho chữ ký và họ tên, không đè kết quả hay tiêu chuẩn. Mẫu đã duyệt có thể bổ sung vị trí ký một lần; đổi vị trí sau đó cần phiên bản mới. Phê duyệt bổ sung không thay mapping các trường đã có.</p>
 <p>Trường và tiêu chí lấy từ Google Sheets; sửa trên Google Sheets rồi tải lại, không thêm hoặc xóa trường tại ERP. Chọn ô địa chỉ trong bảng mapping rồi nhấn trực tiếp ô trên preview để chỉnh vị trí. Nhấn Lưu là xác nhận mapping, phê duyệt và kích hoạt template trong một lần.</p>
 <p id="mappingWarnings"></p><p id="mappingPick" role="status"></p>
 <div id="mappingPreview" class="sheet-preview" tabindex="0" aria-label="Chọn ô để mapping"></div>

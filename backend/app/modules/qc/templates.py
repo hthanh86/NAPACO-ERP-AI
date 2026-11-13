@@ -18,6 +18,7 @@ from app.modules.qc.service import valid_combination
 from app.modules.products.models import Product
 from app.modules.qc import mapping
 from app.core.models import Audit
+from app.core.performance import measure
 
 router = APIRouter()
 
@@ -183,6 +184,7 @@ def get_mapping(identifier: str, user=Depends(manager), db=Depends(get_db)):
 
 
 @router.post('/api/qc/templates/{identifier}/suggest')
+@measure('qc.template.mapping.suggest')
 def suggest_mapping(identifier: str, action: ReleaseAction, user=Depends(manager), db=Depends(get_db)):
     row = template(db, identifier, action.expected_updated_at)
     editable(row)
@@ -194,15 +196,19 @@ def suggest_mapping(identifier: str, action: ReleaseAction, user=Depends(manager
 
 
 @router.put('/api/qc/templates/{identifier}/mapping')
+@measure('qc.template.mapping.save_approve')
 def save_mapping(identifier: str, data: MappingSave, user=Depends(manager), db=Depends(get_db)):
     row = template(db, identifier, data.expected_updated_at)
     editable(row)
-    source = sheets.first_tab(db, user, row.spreadsheet_id, True)
+    with measure('qc.template.google.read'):
+        source = sheets.first_tab(db, user, row.spreadsheet_id, True)
     if mapping.source_hash(source) != data.source_hash:
         raise HTTPException(409, 'Nguồn Google đã thay đổi. Đọc lại và kiểm tra mapping trước khi lưu.')
     # Saving is the manager's explicit approval; suggestions alone never release a template.
-    reviewed = mapping.MappingInput(fields=[field.model_copy(update={'reviewed':True}) for field in data.fields])
-    validated = mapping.validate(source, reviewed, row.check_type, approve=True)
+    reviewed = mapping.MappingInput(fields=[field.model_copy(update={'reviewed':True}) for field in data.fields],
+        signature_cell=data.signature_cell,signature_end_cell=data.signature_end_cell)
+    with measure('qc.template.mapping.validate', fields=len(data.fields)):
+        validated = mapping.validate(source, reviewed, row.check_type, approve=True)
     row = template(db, identifier, data.expected_updated_at, lock=True)
     editable(row)
     row.field_mapping = validated
@@ -218,15 +224,18 @@ def save_mapping(identifier: str, data: MappingSave, user=Depends(manager), db=D
     db.add(Audit(user_id=user.id, action='QC_TEMPLATE_APPROVE', entity_id=row.id,
                  details={'source_hash':row.source_hash,'mapping_hash':mapping.digest(validated)}))
     db.add(Audit(user_id=user.id, action='QC_TEMPLATE_STATUS', entity_id=row.id, details={'status':'ACTIVE'}))
-    db.commit()
+    with measure('qc.template.mysql.commit'):
+        db.commit()
     return {**record(row), 'mapping':row.field_mapping, 'snapshot':row.source_snapshot, 'sources':mapping.SOURCES}
 
 
+@measure('qc.template.source.verify')
 def check_source(db, user, identifier, expected):
     row = template(db, identifier, expected)
     if not row.source_hash or not row.source_snapshot or not row.field_mapping:
         raise HTTPException(422, 'Cần lưu mapping và bản chụp template trước.')
-    source = sheets.first_tab(db, user, row.spreadsheet_id, True)
+    with measure('qc.template.google.read'):
+        source = sheets.first_tab(db, user, row.spreadsheet_id, True)
     row = template(db, identifier, expected, lock=True)
     row.source_matches = (mapping.source_hash(source) == row.source_hash and source['sheet_id'] == row.sheet_id)
     row.updated_at = row.source_checked_at = datetime.utcnow()
@@ -240,6 +249,7 @@ def check_source(db, user, identifier, expected):
 
 
 @router.post('/api/qc/templates/{identifier}/approve')
+@measure('qc.template.approve')
 def approve(identifier: str, action: ReleaseAction, user=Depends(manager), db=Depends(get_db)):
     editable(template(db, identifier, action.expected_updated_at))
     row = check_source(db, user, identifier, action.expected_updated_at)
@@ -266,6 +276,30 @@ def verify(identifier: str, action: ReleaseAction, user=Depends(manager), db=Dep
 
 class StatusAction(ReleaseAction):
     status: Literal['ACTIVE','INACTIVE']
+
+
+class SignatureLocation(ReleaseAction):
+    cell: str = Field(max_length=5)
+    end_cell: str | None = Field(default=None,max_length=5)
+
+
+@router.post('/api/qc/templates/{identifier}/signature-location')
+@measure('qc.template.signature.approve')
+def signature_location(identifier: str, action: SignatureLocation, user=Depends(manager), db=Depends(get_db)):
+    row = check_source(db, user, identifier, action.expected_updated_at)
+    if not row.approved_at or row.field_mapping.get('signature_cell'):
+        raise HTTPException(409, 'Chỉ bổ sung lần đầu vị trí chữ ký cho mẫu đã duyệt; đổi vị trí cần phiên bản mới.')
+    fields = [{k:v for k,v in item.items() if k in mapping.MappingField.model_fields} for item in row.field_mapping['fields']]
+    validated = mapping.validate(row.source_snapshot, mapping.MappingInput(fields=fields, signature_cell=action.cell,signature_end_cell=action.end_cell), row.check_type)
+    row.field_mapping = {**row.field_mapping,'signature_cell':validated['signature_cell'],
+        'signature_approval':{'user_id':user.id,'approved_at':datetime.utcnow().isoformat()}}
+    if validated.get('signature_end_cell'):
+        row.field_mapping = {**row.field_mapping,'signature_end_cell':validated['signature_end_cell']}
+    row.updated_at = datetime.utcnow()
+    db.add(Audit(user_id=user.id,action='QC_TEMPLATE_SIGNATURE_LOCATION',entity_id=row.id,
+        details={'cell':validated['signature_cell']}))
+    db.commit()
+    return record(row)
 
 
 @router.post('/api/qc/templates/{identifier}/status')

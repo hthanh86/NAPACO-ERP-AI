@@ -1,5 +1,7 @@
 import logging
 import time
+from contextlib import nullcontext
+from app.core.performance import trace, record, trace_id
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
@@ -20,7 +22,13 @@ def configure_http(app):
             if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 23_000_000:
                 return JSONResponse({'detail': 'Yêu cầu quá lớn.'}, status_code=413)
         start = time.perf_counter()
-        response = await call_next(request)
+        with trace('qc.request') if request.url.path.startswith('/api/qc') else nullcontext():
+            response = await call_next(request)
+            if request.url.path.startswith('/api/qc'):
+                endpoint = request.scope.get('endpoint')
+                record('qc.endpoint.' + getattr(endpoint, '__name__', 'unknown'), time.perf_counter() - start,
+                       ok=response.status_code < 400, status=response.status_code)
+                response.headers['X-QC-Trace'] = trace_id()
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers['X-Frame-Options'] = 'DENY'

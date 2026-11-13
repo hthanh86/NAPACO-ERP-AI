@@ -119,6 +119,9 @@ def test_pdf_failure_preserves_qc_and_retry_reuses_folder(clients,monkeypatch):
         assert 'parent' not in result.source[drive_bundle.JOB]
         assert created==['allocated-folder','allocated-pdf']
         assert uploads==['allocated-pdf','allocated-pdf']
+        db.expire_all()
+        persisted=db.get(QualityCheck,obj.id).source[drive_bundle.JOB]
+        assert persisted['pending'] is False and persisted['pdf_revision']
         drive_bundle.prepare(db,user,obj.id)
         assert len(uploads)==2
 

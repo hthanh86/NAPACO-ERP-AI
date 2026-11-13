@@ -17,6 +17,7 @@ from app.auth.models import User, LoginSession
 from app.integrations.google.models import GoogleCredential, GoogleOAuthState
 from app.auth.security import token_hash
 from app.auth.access import safe_next
+from app.core.performance import measure
 
 router=APIRouter()
 REDIRECT='http://127.0.0.1:8000/auth/google/callback'
@@ -32,6 +33,7 @@ def cipher():
     return Fernet(os.environ['GOOGLE_TOKEN_KEY'].encode())
 
 
+@measure('google.json')
 def google_json(url,form=None,token=None,body=None,method=None,headers=None,allow_not_found=False):
     extra=dict(headers or {})
     if form is not None:
@@ -107,17 +109,22 @@ def callback(request:Request,db=Depends(get_db)):
     # the new cookie on the following navigation to the protected ERP page.
     # Lax permits this GET; core.http still rejects cross-origin writes.
     response.set_cookie('napaco_session',session,httponly=True,samesite='lax',max_age=8*3600)
+    proof = secret.encrypt(json.dumps({'session':token_hash(session),'user':user.id,
+        'subject':credentials.subject}).encode()).decode()
+    response.set_cookie('napaco_google_proof',proof,httponly=True,samesite='lax',max_age=8*3600)
     return response
 
 
+@measure('oauth.access_token')
 def access_token(db,user):
     secret=cipher();credentials=db.get(GoogleCredential,user.id)
     if not credentials:raise HTTPException(403,'Hãy đăng nhập bằng Google trên /login để sử dụng Drive đúng tài khoản của anh.')
     if credentials.expires_at<=datetime.utcnow()+timedelta(seconds=60):
         if not credentials.encrypted_refresh:raise HTTPException(403,'Cần đăng nhập Google lại để cấp quyền Drive.')
-        result=google_json('https://oauth2.googleapis.com/token',form={'client_id':os.environ['GOOGLE_CLIENT_ID'],
-          'client_secret':os.environ['GOOGLE_CLIENT_SECRET'],'refresh_token':secret.decrypt(credentials.encrypted_refresh.encode()).decode(),
-          'grant_type':'refresh_token'})
+        with measure('oauth.refresh_token'):
+            result=google_json('https://oauth2.googleapis.com/token',form={'client_id':os.environ['GOOGLE_CLIENT_ID'],
+              'client_secret':os.environ['GOOGLE_CLIENT_SECRET'],'refresh_token':secret.decrypt(credentials.encrypted_refresh.encode()).decode(),
+              'grant_type':'refresh_token'})
         credentials.encrypted_access=secret.encrypt(result['access_token'].encode()).decode()
         credentials.expires_at=datetime.utcnow()+timedelta(seconds=int(result.get('expires_in',3600)))
         db.flush()
