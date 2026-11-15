@@ -18,7 +18,7 @@
     const item = el('a', '', 'erp-module-link'); item.href = href;
     const mark = el('span', icon, 'erp-module-icon'); mark.setAttribute('aria-hidden', 'true');
     item.append(mark, el('span', label));
-    const current = location.pathname === '/users' || location.pathname.startsWith('/master/') || location.pathname.startsWith('/qc/')
+    const current = location.pathname === '/users' || location.pathname.startsWith('/master/') || location.pathname.startsWith('/qc/') || location.pathname.startsWith('/production/')
       ? location.pathname : '/?view=' + (new URLSearchParams(location.search).get('view') || 'index');
     if (href === current) item.setAttribute('aria-current', 'page');
     return item;
@@ -61,6 +61,7 @@
     try {
       const user = await window.NAPACO_IDENTITY;
       window.NAPACO_USER = user;
+      if (user.permissions.includes('PRODUCTION_EDIT')) (nav || sidebar).append(group('Kế hoạch', [['Định Hình','/production/schedule','▦'],['Bế Dán · Chưa triển khai','/production/be-dan','◫'],['Dữ liệu nền','/production/planning','⚙'],['Giờ làm / nghỉ mặc định','/production/calendar-settings','◷'],['Chuẩn bị nhựa','/production/materials','▤'],['Lần chạy / nhật ký ca','/production/runs','▶']]));
       const qcLinks = [];
       if (user.permissions.includes('QC_CREATE')) qcLinks.push(['Tạo Phiếu QC','/qc/create','+']);
       if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Tạo Phiếu NCR/CAPA','/qc/ncr','◇']);

@@ -17,3 +17,8 @@ import app.modules.production.models
 import app.modules.qc.models
 import app.modules.qc.template_models
 import app.modules.qc.job_models
+
+import app.modules.production.planning_models
+import app.modules.materials.inventory.allocation_models
+import app.modules.production.run_models
+import app.modules.production.schedule_models

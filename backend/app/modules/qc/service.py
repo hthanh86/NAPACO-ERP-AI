@@ -38,10 +38,13 @@ def object_query(kind):
                       model.machine_id.label('reference'), model.stage.label('info'))
     statement = select(model.id,
                        func.coalesce(func.nullif(model.production_order_id, ''), ProductionSetup.production_order_id).label('production_order_id')
-                       if kind == 'HUT' else ProductionSetup.production_order_id,
+                       if kind == 'HUT' else func.coalesce(ProductionSetup.production_order_id,FormingLog.production_order_id).label('production_order_id'),
                        model.run_date.label('date'), model.setup_id.label('reference'),
                        (model.mold_id if kind == 'HUT' else model.machine_id).label('info'))
-    return statement.outerjoin(ProductionSetup, ProductionSetup.id == model.setup_id)
+    statement = statement.outerjoin(ProductionSetup, ProductionSetup.id == model.setup_id)
+    if kind in {'CAT','EB'}:
+        statement = statement.outerjoin(FormingLog,FormingLog.id==model.order_ref)
+    return statement
 
 
 def object_record(row):
@@ -74,6 +77,9 @@ def resolve_object(db, data, existing=None):
         if not lsx and obj.setup_id:
             setup = db.scalar(select(ProductionSetup).where(ProductionSetup.id == obj.setup_id).with_for_update())
             lsx = setup.production_order_id if setup else ''
+        if not lsx and data.object_type in {'CAT','EB'} and obj.order_ref:
+            forming = db.get(FormingLog,obj.order_ref)
+            lsx = forming.production_order_id if forming else ''
     if lsx and db.scalar(select(ProductionOrder.id).where(ProductionOrder.id == lsx).with_for_update()) is None:
         raise HTTPException(422, 'Nguồn tham chiếu LSX chưa có trong bảng lệnh sản xuất: ' + lsx)
     return obj.id, lsx or None

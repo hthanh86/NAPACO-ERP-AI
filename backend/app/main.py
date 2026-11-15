@@ -8,6 +8,10 @@ from app.auth.api import router as auth_router
 from app.auth.admin import router as admin_router
 from app.modules.master.api import router as master_router
 from app.modules.orders.api import router as orders_router
+from app.modules.production.planning_api import router as planning_router
+from app.modules.production.run_api import router as run_router
+from app.modules.production.schedule_api import router as schedule_router
+from app.modules.materials.inventory.allocation_api import router as allocation_router
 from app.modules.products.api import router as products_router
 from app.modules.qc.api import router as qc_router
 from app.modules.qc.templates import router as qc_templates_router
@@ -23,7 +27,7 @@ from fastapi.openapi.utils import get_openapi
 
 app = FastAPI(title='Napaco ERP Local', version='0.2.0', docs_url=None, redoc_url=None,
               dependencies=[Depends(require_session)], openapi_url=None)
-for router in (orders_router, products_router, qc_templates_router, qc_template_runtime_router, qc_signing_router, qc_jobs_router, qc_router, auth_router, admin_router, master_router, compatibility_router, google_router, system_router):
+for router in (schedule_router, run_router, allocation_router, planning_router, orders_router, products_router, qc_templates_router, qc_template_runtime_router, qc_signing_router, qc_jobs_router, qc_router, auth_router, admin_router, master_router, compatibility_router, google_router, system_router):
     app.include_router(router)
 static = StaticFiles(directory=FRONTEND_ROOT)
 

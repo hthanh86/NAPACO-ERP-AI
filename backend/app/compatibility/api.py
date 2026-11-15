@@ -46,6 +46,10 @@ def execute(db,user,request,*,method=None,args=None,params=None,render=False,rev
     writing=method in WRITE_METHODS
     state=db.scalar(select(LegacyState).where(LegacyState.id==1).with_for_update()) if writing else db.get(LegacyState,1)
     if not state:raise HTTPException(503,'Chưa khởi tạo dữ liệu chuyển đổi đầy đủ.')
+    if method in {'confirmFilmReturn','syncFilmReturnFromJournal'}:
+        from app.modules.materials.inventory.allocation_api import dispatch_legacy
+        native = dispatch_legacy(db,user,method,args,request_id)
+        if native is not None:return native
     if method=='searchUserDriveFiles':
         result=google_drive.search(db,user,(args or [''])[0]);db.commit()
         return {'result':result,'revision':state.revision}
@@ -110,6 +114,8 @@ def commit_write(db,user,state,method,request_id,checksum,books,output,result,up
         touched.append({'table':key,'ids':ids})
     state.properties=output['properties'];state.metadata_entries=output['metadata']
     state.cell_notes=persistent_notes(books,output['notes'],output.get('changed',[]))
+    from app.modules.materials.inventory.allocation_service import reconcile_legacy
+    reconcile_legacy(db,touched)
     state.revision+=1
     db.add(Audit(user_id=user.id,action='LEGACY_'+method,entity_id='',details={'changed':touched,'revision':state.revision}))
     db.add(LegacyRequest(id=request_id,user_id=user.id,payload_hash=checksum,result=result if isinstance(result,dict) else {'value':result}))

@@ -17,7 +17,7 @@ Nguyên tắc:
 - Không tự ý mở rộng phạm vi công việc.
 - Không refactor các chức năng không liên quan.
 - Không thay đổi logic nghiệp vụ đang hoạt động ổn định.
-- Chỉ cài đặt dependency mới khi thấy thực sự cần thiết để thực hiện một tính năng mới
+- Chỉ cài đặt dependency mới khi thấy thực sự cần thiết để thực hiện một tính năng mới. Hoặc dependency mới được đánh giá là tối ưu hơn, tốt hơn cũng được phép cài đặt mới thay thế version cũ
 - Không tự ý triển khai lên môi trường production.
 
 ## 2. Kiểm soát đọc source code và token
