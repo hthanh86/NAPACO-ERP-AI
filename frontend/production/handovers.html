@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cấp NVL và ký bàn giao</title>
+<link rel="stylesheet" href="/static/auth/users.css"><link rel="stylesheet" href="/static/shared/navigation.css"><link rel="stylesheet" href="/static/production/planning.css">
+<script defer src="/static/shared/navigation.js"></script><script defer src="/static/production/handovers.js?v=handover1"></script>
+<style>canvas{display:block;width:min(100%,720px);height:180px;border:1px solid #777;background:#fff;touch-action:none}.signatures{display:flex;flex-wrap:wrap;gap:24px}.signatures section{flex:1;min-width:260px}.signatures canvas{height:120px}dialog{max-width:1000px;width:92vw}td,th{padding:10px;text-align:left}</style></head>
+<body><main><h1>Cấp NVL và ký bàn giao</h1><p><a href="/production/materials">Lập phiếu từ phần giữ NVL</a> · <a href="/production/runs">LSX / nhật ký</a></p>
+<p>Lập phiếu chưa xuất kho. Ký cấp trừ tồn một lần; chờ người nhận ký thì NVL mới được dùng cho sản xuất.</p>
+<form id="search"><label>Mã LSX / lô<input id="q" maxlength="200"></label><label>Trạng thái<select id="state"><option value="">Tất cả</option><option value="draft">Nháp</option><option value="awaiting_receipt">Chờ bàn giao</option><option value="received">Đã nhận</option><option value="cancelled">Đã hủy</option></select></label><button>Tìm kiếm</button></form>
+<p id="message" role="status">Bấm Tìm kiếm để tải phiếu.</p><table><thead><tr><th>LSX</th><th>Lô</th><th>Kg</th><th>Trạng thái</th><th></th></tr></thead><tbody id="rows"></tbody></table><footer><button id="prev" disabled>← Trước</button><span id="count"></span><button id="next" disabled>Sau →</button></footer>
+<dialog id="document"><h2 id="heading"></h2><p id="info"></p><p id="note"></p><p id="error" role="alert"></p><div class="signatures"><section><h3>Người cấp ký</h3><div id="issuer"></div></section><section><h3>Người nhận ký</h3><div id="receiver"></div></section></div>
+<section id="signing"><h3 id="signRole"></h3><p>Nội dung trên phiếu sẽ được xác nhận bằng tài khoản Google đang gắn với phiên ERP của người ký.</p><canvas id="signature" width="900" height="240" aria-label="Vùng ký bàn giao"></canvas><button id="clear">Xóa nét ký</button><button id="sign">Xác nhận và ký</button></section>
+<footer><button id="cancel">Hủy phiếu nháp</button><button id="reload">Tải lại phiếu</button><button id="balances">Xem NVL theo LSX và lô</button><a id="sheet" target="_blank" rel="noopener">In / xem cùng phiếu</a><button id="close">Đóng</button></footer><div id="balanceRows"></div></dialog>
+</main></body></html>

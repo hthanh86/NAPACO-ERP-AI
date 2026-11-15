@@ -20,9 +20,11 @@ SOURCES = {
     'width':'Khổ rộng đặt (danh mục NVL gắn PO)', 'po_quantity':'Số lượng đặt NVL',
     'received_quantity':'Số lượng nhận NVL',
     'qc_note':'Ghi chú phiếu QC','conclusion':'Kết luận QC','signer_name':'Người ký xác nhận','signed_at':'Thời điểm ký UTC',
+    'machine_id':'Máy thực tế','setup_id':'Đợt chạy mẫu','order_line_ids':'CTĐH liên quan','decision':'Quyết định chạy hàng',
 }
 NVL_SOURCES = set(SOURCES) - {'qc_id','object_id','check_type','object_type','checked_at','quantity',
-                             'staff_name','production_order_id','product_ids','product_names','qc_note','conclusion','signer_name','signed_at'}
+                             'staff_name','production_order_id','product_ids','product_names','qc_note','conclusion','signer_name','signed_at',
+                             'machine_id','setup_id','order_line_ids','decision'}
 
 
 def digest(value):

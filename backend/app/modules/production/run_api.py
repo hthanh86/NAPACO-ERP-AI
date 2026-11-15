@@ -1,15 +1,18 @@
 """Run and shift endpoints extend current production orders/logs."""
 from datetime import date
+from typing import Literal
+from html import escape
 from fastapi import APIRouter,Depends,Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse,HTMLResponse
 from sqlalchemy import select,func,or_,inspect
 from app.core.database import get_db
 from app.core.paths import FRONTEND_ROOT
 from app.modules.materials.inventory.allocation_api import access,write,KeyHeader
 from app.modules.production.models import ProductionOrder,FormingLog
 from app.modules.production.run_models import ProductionOrderItem,DownstreamItem
-from app.modules.production.run_schemas import RunInput,VersionInput,ShiftInput,DownstreamInput,CalendarDefaultInput,BindMaterialInput
+from app.modules.production.run_schemas import RunInput,VersionInput,ShiftInput,DownstreamInput,CalendarDefaultInput,BindMaterialInput,SetupInput
 from app.modules.production import run_service as service
+from app.modules.production import release_service
 from app.modules.production.calendar_settings import read_default,save_default
 from app.modules.production.planning_api import commit
 
@@ -26,8 +29,8 @@ def run_suggestions(data:HistoryQuery,user=Depends(access),db=Depends(get_db)):
 
 
 def ready(db):
-    if not inspect(db.connection()).has_table('production_order_items'):
-        service.fail('Chưa áp dụng migration 012 cho lần chạy và nhật ký ca.',503)
+    if not inspect(db.connection()).has_table('production_order_assignments'):
+        service.fail('Chưa áp dụng migration 015 cho phát hành và phân công LSX.',503)
 
 
 @router.get('/production/runs')
@@ -54,15 +57,51 @@ def update_default(data:CalendarDefaultInput,user=Depends(access),db=Depends(get
 def runs(q:str=Query('',max_length=200),status:str=Query('',max_length=100),
          page:int=Query(1,ge=1),size:int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
     ready(db)
-    query=select(ProductionOrder.id,ProductionOrder.group_id,ProductionOrder.machine_id,ProductionOrder.status,
+    query=select(ProductionOrder.id,ProductionOrder.official_code,ProductionOrder.release_state,
+        ProductionOrder.released_at,ProductionOrder.group_id,ProductionOrder.machine_id,ProductionOrder.status,
         ProductionOrder.version,ProductionOrder.planned_sheets,ProductionOrder.planned_hours).where(ProductionOrder.run_snapshot.is_not(None))
     if q:
-        query=query.where(or_(ProductionOrder.id.contains(q,autoescape=True),ProductionOrder.group_id.contains(q,autoescape=True),
+        query=query.where(or_(ProductionOrder.official_code.contains(q,autoescape=True),ProductionOrder.group_id.contains(q,autoescape=True),
             ProductionOrder.id.in_(select(ProductionOrderItem.run_id).where(ProductionOrderItem.order_line_id.contains(q,autoescape=True)))))
     if status:query=query.where(ProductionOrder.status==status)
     total=db.scalar(select(func.count()).select_from(query.subquery()))
     return {'items':[dict(r) for r in db.execute(query.order_by(ProductionOrder.issued_at.desc(),ProductionOrder.id)
             .offset((page-1)*size).limit(size)).mappings()],'total':total,'page':page,'size':size}
+
+
+@router.get('/api/production/machines/{machine_id}/work')
+def machine_work(machine_id:str,stage:Literal['forming','cutting','edge']='forming',
+                 page:int=Query(1,ge=1),size:int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
+    ready(db);return release_service.machine_queue(db,machine_id,stage,page,size)
+
+
+@router.post('/api/production/runs/{identifier}/release')
+def release(identifier:str,data:VersionInput,key:str=KeyHeader,user=Depends(access),db=Depends(get_db)):
+    ready(db);return write(db,user,'run:release:'+identifier,data,key,lambda:release_service.release(db,user,identifier,data))
+
+
+@router.get('/api/production/runs/{identifier}/assignments')
+def assignments(identifier:str,page:int=Query(1,ge=1),size:int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
+    ready(db);return release_service.history(db,identifier,page,size)
+
+
+@router.post('/api/production/runs/{identifier}/setups',status_code=201)
+def create_setup(identifier:str,data:SetupInput,key:str=KeyHeader,user=Depends(access),db=Depends(get_db)):
+    ready(db);return write(db,user,'run:setup:'+identifier,data,key,lambda:release_service.create_setup(db,user,identifier,data))
+
+
+@router.get('/api/production/runs/{identifier}/release-sheet',response_class=HTMLResponse)
+def release_sheet(identifier:str,user=Depends(access),db=Depends(get_db)):
+    ready(db);run=service.run_lock(db,identifier,readonly=True);release_service.require_released(run)
+    frozen=run.release_snapshot;order=frozen['run']
+    rows=''.join('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in
+        (i['order_line_id'],i['snapshot'].get('name',i['product_id']),i['planned_qty'],i['cavity']))+'</tr>' for i in order['items'])
+    return '<!doctype html><html lang="vi"><meta charset="utf-8"><title>'+escape(run.official_code)+'''</title>
+        <style>body{font:16px sans-serif;margin:36px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #888;padding:8px}@media print{button{display:none}}</style>
+        <h1>PHIẾU LỆNH SẢN XUẤT</h1><h2>'''+escape(run.official_code)+'</h2><p>Phát lúc: '+escape(str(run.released_at))+\
+        ' · Người phát: '+escape(str(run.released_by))+'</p><p>Máy định hình lúc phát: '+escape(order['machine_id'])+\
+        '</p><p>Đây là nội dung đã phát; phân công hiện hành xem trên kế hoạch cập nhật.</p><table><thead><tr><th>CTĐH</th><th>Sản phẩm</th><th>Số lượng</th><th>Cavity</th></tr></thead><tbody>'+rows+\
+        '</tbody></table><button onclick="print()">In phiếu</button></html>'
 
 
 @router.get('/api/production/runs/{identifier}')

@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 from decimal import Decimal
 from typing import Annotated,Literal
 from pydantic import Field,model_validator
@@ -20,7 +21,7 @@ class RunMaterialInput(Input):
 
 
 class RunInput(Input):
-    id:Key
+    id:Key=Field(default_factory=lambda:str(uuid4()))
     standard_id:Key
     machine_id:Key
     group_id:str=Field('',max_length=100)
@@ -50,6 +51,16 @@ class VersionInput(Input):
     note:str=Field(min_length=1,max_length=2000)
 
 
+class SetupInput(Input):
+    id:Key=Field(default_factory=lambda:str(uuid4()))
+    run_version:int=Field(ge=1,strict=True)
+    stage:Literal['forming','cutting','edge']='forming'
+    machine_id:Key
+    order_line_id:Key|None=None
+    tool_id:str=Field('',max_length=100)
+    note:str=Field(min_length=1,max_length=2000)
+
+
 class BindMaterialInput(VersionInput):
     allocation_id:Key
     planned_kg:Kg
@@ -73,16 +84,21 @@ class ShiftSourceInput(Input):
 
 
 class ShiftInput(Input):
-    id:Key
+    id:Key=Field(default_factory=lambda:str(uuid4()))
+    setup_id:Key|None=None
+    assignment_id:Key|None=None
+    sample_qc_id:Key|None=None
+    sample_qc_version:int|None=Field(None,ge=1,strict=True)
+    source_hash:str|None=Field(None,pattern=r'^[a-f0-9]{64}$')
     run_version:int=Field(ge=1,strict=True)
     version:int|None=Field(None,ge=1)
     start:datetime
     end:datetime
     good_sheets:Qty
     ng_sheets:Qty
-    seconds_per_cycle:Positive
-    pull_mm:Positive
-    sheet_weight_kg:Positive
+    seconds_per_cycle:Positive|None=None
+    pull_mm:Positive|None=None
+    sheet_weight_kg:Positive|None=None
     items:list[ShiftItemInput]=Field(min_length=1,max_length=100)
     sources:list[ShiftSourceInput]=Field(default_factory=list,max_length=100)
     note:str=Field(min_length=1,max_length=2000)
@@ -101,6 +117,7 @@ class ShiftInput(Input):
 
 
 class DownstreamInput(Input):
+    setup_id:Key|None=None
     id:Key
     stage:Literal['cutting','edge']
     forming_log_id:Key

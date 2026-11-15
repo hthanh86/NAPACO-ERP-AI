@@ -33,10 +33,10 @@ def editor(db,identifier):
         i.update(meta.get(i['order_line_id'],{}));i['remaining_qty']=i['planned_qty']-i['completed_qty']
     allocations=db.scalars(select(Allocation).where(Allocation.order_line_id.in_(list(meta))).order_by(Allocation.id).limit(501)).all()
     if len(allocations)>500:fail('Nhóm có quá nhiều phân bổ; thu hẹp nhóm hoặc quản lý nguồn tại màn hình Chuẩn bị nhựa.')
-    data['allocations']=[allocation_record(a) for a in allocations]
+    data['allocations']=[{**allocation_record(a),'issued_kg':str(next((b.issued_kg for b in bindings if b.allocation_id==a.id),0))} for a in allocations]
     movements=db.scalar(select(FilmMovement.id).where(FilmMovement.production_order_id==identifier).limit(1))
     actual=db.scalar(select(FormingLog.id).where(FormingLog.production_order_id==identifier).limit(1))
-    data['can_edit']=run.status==service.runs.PLANNED and not movements and not actual
+    data['can_edit']=run.status!=service.runs.ENDED
     return data
 
 
@@ -82,7 +82,9 @@ def project(db,result,canonical,version,start,end,machine_id='',customer_id='',q
         if not relevant:continue
         row=live.get(job['run_id']);job['items']=members;job['policy']=policy_map.get(job['run_id'],{'run_id':job['run_id'],'stages':[],'line_order':[],'ready_at':None,'waiting':False})
         job['live_version']=row.version if row else job['run_version'];job['run_status']=row.status if row else service.runs.PLANNED
-        job['can_move']=not read_only and job['run_status']==service.runs.PLANNED and job['run_id'] not in moved and job['run_id'] not in actual_runs
+        job['can_move']=not read_only and job['run_status']!=service.runs.ENDED
+        job['official_code']=row.official_code if row else job.get('official_code')
+        job['release_state']=row.release_state if row else job.get('release_state','legacy')
         job['machine_kind']=job.get('machine_kind') or (row.run_snapshot.get('machine_kind') if row else None)
         job['stale']=bool(row and row.version!=job['run_version'] and row.id not in changed);jobs.append(job)
         visible_lines.update(i['order_line_id'] for i in members)

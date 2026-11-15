@@ -8,6 +8,7 @@ from app.modules.production.models import ProductionOrder as Run,FormingLog,Cutt
 from app.modules.production.run_models import ProductionOrderItem as Item,ShiftItem,DownstreamItem
 from app.modules.production.planning_models import Machine
 from app.modules.production.planning_service import ZONE
+from app.modules.production.release_service import machine_expression
 from app.modules.production.schedule_view import line_metadata
 from app.modules.materials.inventory.allocation_service import fail
 from app.modules.orders.models import OrderLine,Order
@@ -66,10 +67,10 @@ def read(db,*,start,end,machine_id='',customer_id='',q='',related_run_ids=()):
         if len(records)>LIMIT:fail('Hơn 2000 nhật ký trong phạm vi thực tế; thu hẹp ngày, máy hoặc CTĐH.')
     query=select(FormingLog.id,FormingLog.production_order_id.label('run_id'),FormingLog.shift_start,FormingLog.shift_end,
         FormingLog.run_date,FormingLog.start_time,FormingLog.end_time,FormingLog.shift_snapshot,FormingLog.good,FormingLog.ng,
-        Run.machine_id,Run.run_snapshot,Run.status,Run.order_line_id,Run.group_id).join(Run,Run.id==FormingLog.production_order_id).where(or_(
+        machine_expression().label('machine_id'),Run.run_snapshot,Run.status,Run.order_line_id,Run.group_id).join(Run,Run.id==FormingLog.production_order_id).where(or_(
         and_(FormingLog.shift_start<end.astimezone(ZONE).replace(tzinfo=None),FormingLog.shift_end>start.astimezone(ZONE).replace(tzinfo=None)),
         and_(or_(FormingLog.shift_start.is_(None),FormingLog.shift_end.is_(None)),FormingLog.run_date.between(lo,hi))))
-    forming=db.execute(filtered(query,Run.machine_id).order_by(FormingLog.id).limit(LIMIT+1)).mappings().all()
+    forming=db.execute(filtered(query,machine_expression()).order_by(FormingLog.id).limit(LIMIT+1)).mappings().all()
     if len(forming)>LIMIT:fail('Quá nhiều nhật ký định hình; thu hẹp bộ lọc.')
     shift_rows=defaultdict(list)
     for i in db.execute(select(ShiftItem.log_id,ShiftItem.order_line_id,ShiftItem.good_qty,ShiftItem.ng_qty)

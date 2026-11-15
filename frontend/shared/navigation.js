@@ -61,8 +61,14 @@
     try {
       const user = await window.NAPACO_IDENTITY;
       window.NAPACO_USER = user;
-      if (user.permissions.includes('PRODUCTION_EDIT')) (nav || sidebar).append(group('Kế hoạch', [['Định Hình','/production/schedule','▦'],['Bế Dán · Chưa triển khai','/production/be-dan','◫'],['Dữ liệu nền','/production/planning','⚙'],['Giờ làm / nghỉ mặc định','/production/calendar-settings','◷'],['Chuẩn bị nhựa','/production/materials','▤'],['Lần chạy / nhật ký ca','/production/runs','▶']]));
+      if (user.permissions.includes('PRODUCTION_EDIT')) {
+        for (const pending of sidebar.querySelectorAll('.erp-module-link[aria-disabled="true"]')) {
+          if (pending.textContent.includes('Nhật Ký Định Hình')) pending.replaceWith(link('Nhật ký định hình', '/production/forming', '✎'));
+        }
+      }
+      if (user.permissions.includes('PRODUCTION_EDIT')) (nav || sidebar).append(group('Kế hoạch', [['Định Hình','/production/schedule','▦'],['Bế Dán · Chưa triển khai','/production/be-dan','◫'],['Dữ liệu nền','/production/planning','⚙'],['Giờ làm / nghỉ mặc định','/production/calendar-settings','◷'],['Chuẩn bị nhựa','/production/materials','▤'],['Kiểm mẫu trước chạy','/production/samples','✓'],['Nhật ký định hình','/production/forming','✎'],['Lần chạy / nhật ký ca','/production/runs','▶']]));
       const qcLinks = [];
+      if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Kiểm mẫu trước chạy','/production/samples','✓']);
       if (user.permissions.includes('QC_CREATE')) qcLinks.push(['Tạo Phiếu QC','/qc/create','+']);
       if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Tạo Phiếu NCR/CAPA','/qc/ncr','◇']);
       if (user.permissions.includes('QC_VIEW')) qcLinks.push(['Danh sách QC','/qc/list','▤']);

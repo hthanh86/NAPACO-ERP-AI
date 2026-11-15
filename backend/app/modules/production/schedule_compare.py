@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import select
 from app.modules.production.schedule_models import SchedulePlan
+from app.modules.production.models import ProductionOrder
 from app.modules.production import schedule_daily as daily,schedule_view,schedule_actual as actual
 from app.modules.production.schedule_actual import stamp,qty
 from app.modules.production.schedule_service import encoded
@@ -141,5 +142,10 @@ def view(db,day,mode,**scope):
         'actual_data_updated_at':live['data_updated_at'] if live else None,'actual_retrieved_at':live['retrieved_at'] if live else None,
         'actual_update_time_complete':live['update_time_complete'] if live else None}
     workspace['day']=daily.metadata(row)
+    # Official codes may be issued after the initial plan was frozen. Resolve
+    # display labels separately; never rewrite the baseline's release state,
+    # quantities, assignments or timing with current business data.
+    workspace['run_labels']={r.id:r.official_code for r in db.execute(
+        select(ProductionOrder.id,ProductionOrder.official_code).where(ProductionOrder.id.in_(visible))) if r.official_code}
     if len(workspace['machines'])>100 or len(workspace['line_metadata'])>500:fail('Phạm vi so sánh vượt 100 máy hoặc 500 CTĐH; thu hẹp bộ lọc.')
     return encoded(workspace)

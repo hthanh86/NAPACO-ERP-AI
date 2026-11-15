@@ -20,5 +20,6 @@ import app.modules.qc.job_models
 
 import app.modules.production.planning_models
 import app.modules.materials.inventory.allocation_models
+import app.modules.materials.inventory.handover_models
 import app.modules.production.run_models
 import app.modules.production.schedule_models

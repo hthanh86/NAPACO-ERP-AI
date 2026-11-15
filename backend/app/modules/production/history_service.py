@@ -149,24 +149,27 @@ def suggestions(db,data):
             if not log.shift_start or not log.shift_end or not pure or not cycles or pure<=0 or cycles<=0 or pure>(log.shift_end-log.shift_start).total_seconds():
                 rejected['missing_measured_pure_or_cycles']+=1;continue
             run=by_run[log.production_order_id]
+            frozen=snapshot.get('items')
+            measured_members=list(frozen.values()) if frozen else members[run.id]
             totals=defaultdict(float);valid=True
-            expected={ct for rid,ct in membership if rid==run.id}
+            expected=set(frozen) if frozen else {ct for rid,ct in membership if rid==run.id}
             if {i.order_line_id for i in counts[log.id]}!=expected:valid=False
             for item in counts[log.id]:
-                member=membership.get((run.id,item.order_line_id))
+                saved_member=frozen.get(item.order_line_id) if frozen else None
+                member=(saved_member['product_id'],saved_member['cavity']) if saved_member else membership.get((run.id,item.order_line_id))
                 if not member or item.good_qty<0 or item.ng_qty<0:valid=False;continue
                 totals[member[0]]+=float(item.good_qty+item.ng_qty)
-            if not valid or any(not math.isclose(totals[p['product_id']],cycles*p['cavity'],abs_tol=1e-6) for p in members[run.id]):
+            if not valid or any(not math.isclose(totals[p['product_id']],cycles*p['cavity'],abs_tol=1e-6) for p in measured_members):
                 rejected['quantity_cavity_balance']+=1;continue
             saved=snapshot.get('run_snapshot',{})
-            sig=signature(saved,members[run.id],saved.get('machine_id'),snapshot.get('parameters',{}).get('pull_mm'))
+            sig=signature(saved,measured_members,saved.get('machine_id'),snapshot.get('parameters',{}).get('pull_mm'))
             sig['resin']=source_resin(log.id)
             if not sig['resin'] or not target['resin']:rejected['unverified_resin']+=1;continue
             seconds=pure/cycles
             if not .05<=seconds<=3600:rejected['abnormal_speed']+=1;continue
             values={'seconds_per_cycle':seconds}
             good=sum(float(i.good_qty) for i in counts[log.id]);ng=sum(float(i.ng_qty) for i in counts[log.id])
-            if len({p['unit'].casefold() for p in members[run.id]})==1 and good+ng>0:values['yield_percent']=good/(good+ng)*100
+            if len({p['unit'].casefold() for p in measured_members})==1 and good+ng>0:values['yield_percent']=good/(good+ng)*100
             balanced=bool(material[log.id]) and all(i.opening_kg+i.input_kg-i.output_kg-i.consumed_kg==i.closing_kg and min(i.opening_kg,i.input_kg,i.output_kg,i.consumed_kg,i.closing_kg)>=0 for i in material[log.id])
             if balanced:
                 consumed=sum(float(i.consumed_kg) for i in material[log.id])
@@ -192,11 +195,12 @@ def suggestions(db,data):
             if {i.snapshot.get('product',{}).get('unit','').casefold() for i in items}!={data.unit.casefold()}:rejected['unit_mismatch']+=1;continue
             # Require the full product combination, not a partial downstream batch of a group.
             actual_products={i.snapshot.get('product',{}).get('product_id') for i in items}
-            expected_products={i['product_id'] for i in members[run.id] if data.stage in i['route']}
+            measured_members=list(log.shift_snapshot['items'].values()) if log.shift_snapshot.get('items') else members[run.id]
+            expected_products={i['product_id'] for i in measured_members if data.stage in i['route']}
             if actual_products!=expected_products:rejected['partial_group']+=1;continue
             from app.modules.production.models import CuttingLog,EBLog
             observations.append({'run_id':run.id,'journal_id':identifier,'at':end.replace(tzinfo=None),
-                'signature':signature(log.shift_snapshot.get('run_snapshot',{}),members[run.id],None),
+                'signature':signature(log.shift_snapshot.get('run_snapshot',{}),measured_members,None),
                 'values':{'seconds_per_unit':pure/amount,'yield_percent':sum(float(i.good_qty) for i in items)/amount*100},
                 'weight':amount,'pure':pure,'setup':number(snapshot.get('setup_seconds')),'stage_log':identifier})
         model=CuttingLog if data.stage=='cutting' else EBLog

@@ -1184,6 +1184,12 @@
       link.hidden = false;
       showStatus('✅ ' + result.message + (codes.length ? ' Mã đơn ' + codes.join(', ') : ''), 'success');
 
+      // Local ERP has real page routes and a transport bridge, not GAS history.
+      if (typeof window.NAPACO_REV === 'number') {
+        location.assign(url.href);
+        return;
+      }
+
       google.script.run
         .withSuccessHandler(function(html) {
           const page = new DOMParser().parseFromString(html, 'text/html');

@@ -177,7 +177,7 @@ Bước 7: Báo cáo kết quả ngắn gọn.
 
 Không cần hỏi xác nhận cho các thao tác đọc và sửa thông thường nằm trong phạm vi được giao.
 
-Chỉ yêu cầu xác nhận khi cần:
+Chỉ yêu cầu xác nhận khi cần. Tạm thời lược bỏ phần này vì đang trong giai đoạn phát triển chưa chính thức phát hành
 - Thay đổi database schema hoặc migration có rủi ro.
 - Xóa dữ liệu.
 - Thay đổi phân quyền hoặc bảo mật.

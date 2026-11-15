@@ -109,7 +109,11 @@ def movements(identifier: str,page: int=Query(1,ge=1),size: int=Query(25,ge=1,le
     query=select(Link,FilmMovement).join(FilmMovement,FilmMovement.id==Link.movement_id).where(Link.allocation_id==identifier)
     total=db.scalar(select(func.count()).select_from(query.subquery()))
     rows=db.execute(query.order_by(FilmMovement.moved_at,FilmMovement.id).offset((page-1)*size).limit(size)).all()
+    from app.modules.production.models import ProductionOrder
+    codes=dict(db.execute(select(ProductionOrder.id,ProductionOrder.official_code).where(
+        ProductionOrder.id.in_([m.production_order_id for link,m in rows]))).all())
     return {'items':[{'id':m.id,'kind':m.kind,'kg':str(m.quantity),'receipt_id':m.receipt_id,'production_order_id':m.production_order_id,
+                     'production_order_code':codes.get(m.production_order_id),
                      'source_issue_id':link.issue_id,'transfer_id':link.transfer_id,'confirmed':bool(m.receiver_id),
                      'mode':link.mode,'note':m.note,'moved_at':m.moved_at} for link,m in rows],
             'total':total,'page':page,'size':size}
@@ -130,7 +134,10 @@ def edit(identifier: str,data: EditInput,key: str=KeyHeader,user=Depends(access)
 
 @router.post(PREFIX+'/allocations/{identifier}/issue',status_code=201)
 def issue(identifier: str,data: IssueInput,key: str=KeyHeader,user=Depends(access),db=Depends(get_db)):
-    return write(db,user,'issue:'+identifier,data,key,lambda:service.issue(db,user,identifier,data))
+    from app.modules.materials.inventory import handover_service
+    from app.modules.materials.inventory.handover_api import ready as handover_ready
+    handover_ready(db)
+    return write(db,user,'handover:issue-draft:'+identifier,data,key,lambda:handover_service.create_issue(db,user,identifier,data))
 
 
 @router.post(PREFIX+'/issues/{identifier}/return',status_code=201)
@@ -151,9 +158,12 @@ def confirm(identifier: str,data: ConfirmInput,key: str=KeyHeader,user=Depends(c
 
 @router.post(PREFIX+'/issues/{identifier}/transfer',status_code=201)
 def transfer(identifier: str,data: TransferInput,key: str=KeyHeader,user=Depends(access),db=Depends(get_db)):
-    # Transfer confirms a physical return and immediately reissues it; warehouse authority is required.
+    # Draft only; signing later performs the atomic return/reissue with warehouse authority.
     require(db,user,'NVL_RECEIVE');require(db,user,'NVL_STOCK_VIEW')
-    return write(db,user,'transfer:'+identifier,data,key,lambda:service.transfer(db,user,identifier,data))
+    from app.modules.materials.inventory import handover_service
+    from app.modules.materials.inventory.handover_api import ready as handover_ready
+    handover_ready(db)
+    return write(db,user,'handover:transfer-draft:'+identifier,data,key,lambda:handover_service.create_transfer(db,user,identifier,data))
 
 
 @router.get(PREFIX+'/production-orders')
@@ -161,10 +171,12 @@ def production_orders(order_line_id: str,q: str=Query('',max_length=100),page: i
                       size: int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
     from app.modules.production.models import ProductionOrder
     from app.modules.production.run_models import ProductionOrderItem
-    query=select(ProductionOrder.id,ProductionOrder.machine_id,ProductionOrder.product_id,ProductionOrder.status).where(
-        or_(ProductionOrder.order_line_id==order_line_id,ProductionOrder.id.in_(select(ProductionOrderItem.run_id).where(
-            ProductionOrderItem.order_line_id==order_line_id))))
-    if q:query=query.where(ProductionOrder.id.contains(q,autoescape=True))
+    query=select(ProductionOrder.id,ProductionOrder.official_code,ProductionOrder.machine_id,ProductionOrder.product_id,ProductionOrder.status).where(
+        ProductionOrder.release_state=='released',ProductionOrder.status.in_(['Chưa chạy','Đang chạy']),
+        ProductionOrder.id.in_(select(ProductionOrderItem.run_id).where(
+            ProductionOrderItem.order_line_id==order_line_id,ProductionOrderItem.enabled.is_(True),
+            ProductionOrderItem.completed_qty<ProductionOrderItem.planned_qty)))
+    if q:query=query.where(ProductionOrder.official_code.contains(q,autoescape=True))
     total=db.scalar(select(func.count()).select_from(query.subquery()))
     return {'items':[dict(r) for r in db.execute(query.order_by(ProductionOrder.id).offset((page-1)*size).limit(size)).mappings()],
             'total':total,'page':page,'size':size}

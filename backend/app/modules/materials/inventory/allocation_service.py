@@ -134,6 +134,8 @@ def allocation_lock(db,identifier,version=None):
 
 def edit(db,user,identifier,data):
     a=allocation_lock(db,identifier,data.version)
+    from app.modules.materials.inventory.handover_service import reserved
+    if data.held_kg<reserved(db,a.id):fail('Lượng giữ đã có phiếu bàn giao nháp; hủy phiếu trước khi giảm.',409)
     previous=a.held_kg
     if inspect(db.connection()).has_table('production_run_materials'):
         from app.modules.production.run_service import protect_hold
@@ -148,11 +150,13 @@ def edit(db,user,identifier,data):
 
 def production_order(db,a,identifier):
     order=db.scalar(select(ProductionOrder).where(ProductionOrder.id==identifier).with_for_update())
+    from app.modules.production.release_service import require_released
+    require_released(order)
     line=db.get(OrderLine,a.order_line_id)
     if order and order.run_snapshot:
         from app.modules.production.run_models import ProductionOrderItem
         item=db.get(ProductionOrderItem,(identifier,a.order_line_id))
-        if not item or item.product_id!=line.product_id:fail('CTĐH/sản phẩm không thuộc lần chạy ghép.')
+        if not item or not item.enabled or item.product_id!=line.product_id:fail('CTĐH/sản phẩm không thuộc phần được thực hiện của LSX.')
         return order
     if not order or order.order_line_id!=a.order_line_id or order.product_id!=line.product_id:
         fail('LSX phải thuộc đúng CTĐH và sản phẩm được phân bổ.')
@@ -165,7 +169,7 @@ def new_movement(db,user,a,kg,kind,order_id,*,issue_id=None,mode='issue',transfe
     movement=FilmMovement(id=('MV_CAP_' if kind=='CẤP NVL' else 'MV_TRA_')+str(uuid4()),
         moved_at=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%Y-%m-%d %H:%M:%S'),
         kind=kind,production_order_id=order_id,receipt_id=a.receipt_id,quantity=kg,
-        issuer_id=user.id,receiver_id=user.id if kind=='CẤP NVL' or confirmed else '',
+        issuer_id=user.id,receiver_id=user.id if kind=='TRẢ NVL' and confirmed else '',
         qc_id='',note=note,source={})
     db.add(movement);db.flush()
     db.add(Link(movement_id=movement.id,allocation_id=a.id,issue_id=issue_id,mode=mode,transfer_id=transfer_id,
@@ -173,8 +177,12 @@ def new_movement(db,user,a,kg,kind,order_id,*,issue_id=None,mode='issue',transfe
     db.flush();return movement
 
 
-def issue(db,user,identifier,data):
+def issue(db,user,identifier,data,*,handover=None):
+    if not handover or handover.state!='draft' or not handover.issue_signature or handover.run_id!=data.production_order_id or handover.quantity!=data.kg:
+        fail('Cấp NVL phải được Ký cấp trên phiếu bàn giao.',409)
     a=allocation_lock(db,identifier,data.version)
+    from app.modules.materials.inventory.handover_service import reserved
+    if data.kg+reserved(db,a.id,exclude=handover.id)>a.held_kg:fail('Phần giữ đã cam kết cho phiếu bàn giao khác.',409)
     if data.kg>a.held_kg:fail('Số kg cấp vượt phần chưa cấp đang giữ.',409)
     target(db,a.order_line_id,a.standard_id,a.receipt_id,new=False)
     order=production_order(db,a,data.production_order_id)
@@ -209,6 +217,9 @@ def issue_balances(db,issues):
             used[identifier]+=weight*(good+ng)/1000
         except (HTTPException,ValueError):invalid.add(identifier)
     result={}
+    from app.modules.materials.inventory.handover_models import MaterialHandover
+    from app.modules.materials.inventory.handover_sources import received
+    handovers={h.movement_id:h for h in db.scalars(select(MaterialHandover).where(MaterialHandover.movement_id.in_(by_id)))}
     for identifier,m in by_id.items():
         confirmed=sum((decimal(r.quantity) for r in returns[identifier] if r.receiver_id.strip()),ZERO)
         pending=sum((decimal(r.quantity) for r in returns[identifier] if not r.receiver_id.strip()),ZERO)
@@ -220,6 +231,12 @@ def issue_balances(db,issues):
             'used_estimate_kg':used[identifier] if complete else None,'at_machine_kg':estimated,
             'balance_status':'estimated' if estimated is not None else 'unknown',
             'upper_kg':upper,'invalid_journal':identifier in invalid,'entries':entries[identifier]}
+        doc=handovers.get(identifier)
+        result[identifier].update(handover_id=doc.id if doc else None,
+            handover_state=doc.state if doc else 'legacy_unverified',
+            received_signed_kg=doc.quantity if received(doc) else ZERO,
+            pending_handover_kg=doc.quantity if doc and doc.state=='awaiting_receipt' else ZERO)
+        if doc and not received(doc):result[identifier].update(at_machine_kg=ZERO,balance_status='awaiting_receipt')
     return result
 
 
@@ -230,18 +247,24 @@ def linked_issue(db,identifier):
     source=db.get(FilmMovement,source_id)
     source_link=db.get(Link,source_id)
     if not source or not source_link or source.kind!='CẤP NVL':fail('Không xác định được lần cấp gốc.')
+    from app.modules.materials.inventory.handover_models import MaterialHandover
+    from app.modules.materials.inventory.handover_sources import received
+    handover=db.scalar(select(MaterialHandover).where(MaterialHandover.movement_id==source.id))
+    if handover and not received(handover):fail('NVL chưa ký nhận, không được trả/chuyển từ máy.',409)
     return source,source_link,allocation_lock(db,source_link.allocation_id)
 
 
-def return_limit(db,source,kg):
+def return_limit(db,source,kg,*,handover=None):
     balance=issue_balances(db,[source])[source.id]
     limit=balance['at_machine_kg'] if balance['at_machine_kg'] is not None else balance['upper_kg']
     if balance['invalid_journal']:fail('Nhật ký không đầy đủ/hợp lệ; đối soát trước khi trả/chuyển.')
     limit-=balance['pending_return_kg']
     from app.modules.production.run_service import source_position
-    position=source_position(db,source.production_order_id,source.receipt_id)
+    position=source_position(db,source.production_order_id,source.receipt_id,legacy=balance['handover_state']=='legacy_unverified')
     if position is not None:limit=min(limit,position['kg'])
-    if kg>limit:fail('Lượng trả/chuyển vượt số dư hoặc đã có phần trả chờ.',409)
+    from app.modules.materials.inventory.handover_service import transfer_reserved
+    committed=transfer_reserved(db,source.id,handover.id if handover else None)
+    if kg+committed>limit:fail('Lượng trả/chuyển vượt số dư hoặc đã có phần trả/phiếu chuyển chờ.',409)
     return balance
 
 
@@ -263,9 +286,9 @@ def sync_return(db,user,identifier):
     if order and order.run_snapshot:
         if returns:return {'id':returns[0][1].id,'kg':str(returns[0][1].quantity),'changed':False}
         from app.modules.production.run_service import source_position
-        position=source_position(db,order.id,source.receipt_id)
-        if not position or not position['as_of']:return {'id':'','kg':0,'changed':False,'unknown':True}
         balance=issue_balances(db,[source])[source.id]
+        position=source_position(db,order.id,source.receipt_id,legacy=balance['handover_state']=='legacy_unverified')
+        if not position or not position['as_of']:return {'id':'','kg':0,'changed':False,'unknown':True}
         kg=min(position['kg'],balance['upper_kg']-balance['pending_return_kg'])
         if kg<=0:return {'id':'','kg':0,'changed':False}
         return request_return(db,user,source.id,SimpleNamespace(kg=kg,note='Trả từ số dư ca đã chốt; chờ kho nhận.'),mode='auto_return')
@@ -303,10 +326,12 @@ def confirm_return(db,user,identifier,kg):
     db.flush();return {'id':identifier,'kg':str(kg)}
 
 
-def transfer(db,user,identifier,data):
+def transfer(db,user,identifier,data,*,handover=None):
+    if not handover or handover.state!='draft' or not handover.issue_signature or handover.mode!='transfer':
+        fail('Chuyển NVL phải Ký cấp trên phiếu bàn giao.',409)
     source,link,old=linked_issue(db,identifier)
     if data.kg>data.measured_remaining_kg:fail('Số chuyển vượt số dư kiểm đếm tại máy.')
-    balance=return_limit(db,source,data.kg)
+    balance=return_limit(db,source,data.kg,handover=handover)
     upper=balance['at_machine_kg'] if balance['at_machine_kg'] is not None else balance['upper_kg']
     if data.measured_remaining_kg>upper:fail('Kiểm đếm vượt giới hạn sổ cấp/nhật ký; cần đối soát.')
     target(db,data.order_line_id,data.standard_id,old.receipt_id)
@@ -322,7 +347,7 @@ def transfer(db,user,identifier,data):
     from app.modules.production.run_service import transfer_binding
     transfer_binding(db,data.production_order_id,allocation['id'],data.kg)
     result=issue(db,user,allocation['id'],SimpleNamespace(version=1,kg=data.kg,
-        production_order_id=data.production_order_id,note=data.note))
+        production_order_id=data.production_order_id,note=data.note),handover=handover)
     db.get(Link,result['movement_id']).transfer_id=group
     old.version+=1
     audit(db,user,'MATERIAL_TRANSFER',group,{'from_issue':source.id,'return_id':returned.id,
@@ -355,6 +380,8 @@ def reconcile_legacy(db,touched):
     if any(balances[a.receipt_id]['material_id']!=material_id for a,material_id in affected):
         fail('Không đổi vật liệu nguồn đang được giữ cho CTĐH.',409)
     changed=[identifier for t in touched if t['table']=='FILM_MOVEMENTS' for identifier in t['ids']]
+    from app.modules.materials.inventory.handover_models import MaterialHandover
+    handovers={h.movement_id:h for h in db.scalars(select(MaterialHandover).where(MaterialHandover.movement_id.in_(changed)))}
     for link,movement in db.execute(select(Link,FilmMovement).join(FilmMovement,FilmMovement.id==Link.movement_id)
             .where(Link.movement_id.in_(changed))).all():
         snapshot=link.snapshot
@@ -362,3 +389,6 @@ def reconcile_legacy(db,touched):
             fail('Không đổi nguồn/LSX của giao dịch đã có truy vết.',409)
         if link.mode=='issue' and (movement.kind!='CẤP NVL' or movement.quantity!=decimal(snapshot['quantity_kg'])):
             fail('Không sửa số kg của lần cấp đã có truy vết; dùng trả/chuyển.',409)
+        doc=handovers.get(movement.id)
+        if doc and (movement.issuer_id!=doc.issued_by or movement.receiver_id!=(doc.received_by or '')):
+            fail('Không sửa người cấp/nhận qua đường tương thích; phải ký trên hồ sơ bàn giao.',409)

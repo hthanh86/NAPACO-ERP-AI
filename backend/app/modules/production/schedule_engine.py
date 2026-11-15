@@ -178,6 +178,7 @@ def calculate(context):
         missing+=left
         status='released_waiting' if waiting else 'unknown' if missing else 'scheduled'
         report={'run_id':identifier,'run_version':run['version'],'machine_id':run['machine_id'],
+            'official_code':run.get('official_code'),'release_state':run.get('release_state','legacy'),
             'machine_kind':run['snapshot'].get('machine_kind'),'planned_items':items,
             'status':status,'cycles':cycles,'sheets':cycles,'setup_seconds':str(setup_seconds),'pure_seconds':str(run_seconds),
             'base_kg':str(req['base_kg']),'waste_kg':str(req['waste_kg']),'required_kg':str(req['required_kg']),

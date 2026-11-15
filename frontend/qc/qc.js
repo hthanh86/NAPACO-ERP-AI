@@ -84,7 +84,7 @@
       const placeholder=element('option','— Chọn bản ghi —'); placeholder.value='';
       $('objectResults').replaceChildren(placeholder,...available.map(row=>{
         const label=$('objectType').value==='NVL' ? [row.id,(row.products||[]).join(', '),[row.resin,row.specification].filter(Boolean).join(' · '),row.supplier].filter(Boolean).join(' | ')
-          : [row.id,row.production_order_id && 'LSX: '+row.production_order_id,row.date,row.reference,row.info].filter(Boolean).join(' · ');
+          : [row.id,row.production_order_id && 'LSX: '+(row.production_order_code||'LSX cũ'),row.date,row.reference,row.info].filter(Boolean).join(' · ');
         const option=element('option',label);option.title=label;option.value=String(objectItems.indexOf(row));return option;
       }));$('objectResults').value='';
       $('objectHint').textContent=`Trang ${page} · ${available.length} kết quả`+($('objectType').value==='NVL'?' · NVL còn tồn, chưa IQC, nhập trong 15 ngày gần nhất.':'');
@@ -188,7 +188,7 @@
       $('rows').replaceChildren(...result.items.map(row=>{
         const tr=element('tr');
         const whole=integerValue(row.quantity);
-        for(const value of [row.id,row.checked_at?.replace('T',' '),row.check_type,row.object_type,row.production_order_id,whole?BigInt(whole).toLocaleString('vi-VN'):'',row.result,row.staff_name])tr.append(element('td',value??''));
+        for(const value of [row.id,row.checked_at?.replace('T',' '),row.check_type,row.object_type,row.production_order_code||(row.production_order_id?'LSX cũ':''),whole?BigInt(whole).toLocaleString('vi-VN'):'',row.result,row.staff_name])tr.append(element('td',value??''));
         const sync=element('td'),labels={PENDING:'Chờ xử lý',PROCESSING:'Đang hoàn thiện hồ sơ',COMPLETED:'Đã lưu đầy đủ',FAILED:'Lỗi đồng bộ'};
         sync.append(element('strong',row.sync_status?row.sync_status+' · '+labels[row.sync_status]:'Hồ sơ trước queue'));
         if(row.sync_step)sync.append(element('p',row.sync_step));
@@ -222,7 +222,7 @@
       else $('objectType').replaceChildren();
       for(const node of $('qcForm').querySelectorAll('[name]'))if(record[node.name]!=null)node.value=record[node.name];
       $('quantity').value=integerValue(record.quantity);
-      $('checkedAt').value=record.checked_at||'';$('lsx').value=record.production_order_id||'';$('staff').value=record.staff_name||'Chưa xác định';$('ncr').value=record.ncr_id||'';
+      $('checkedAt').value=record.checked_at||'';$('lsx').value=record.production_order_code||(record.production_order_id?'LSX cũ':'');$('staff').value=record.staff_name||'Chưa xác định';$('ncr').value=record.ncr_id||'';
       $('editorHeading').textContent='Phiếu '+record.id;$('closeEditor').hidden=false;
       viewOnly=!user.permissions.includes('QC_EDIT');
       for(const node of $('qcForm').querySelectorAll('input,select,textarea,button'))node.disabled=viewOnly;
@@ -246,7 +246,7 @@
       $('checkType').onchange=()=>{if(drafts.length){$('checkType').value='QC NVL';$('formError').textContent='Hãy tạo hoặc bỏ các phiếu đang chờ trước khi đổi loại kiểm tra.';}window.QCFormUI.invalidate(true);types();resetObject();draftPanel();};$('objectType').onchange=()=>{window.QCFormUI.invalidate(true);resetObject();};
       $('findObjects').onclick=()=>findObjects();$('objectPrevious').onclick=()=>findObjects(objectPage-1);$('objectNext').onclick=()=>findObjects(objectPage+1);
       $('objectSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();findObjects();}};
-      $('objectResults').onchange=()=>{window.QCFormUI.invalidate(true);const value=$('objectResults').value;const row=value===''?null:objectItems[Number(value)];$('objectId').value=row?.id||'';$('lsx').value=row?.production_order_id||'';};
+      $('objectResults').onchange=()=>{window.QCFormUI.invalidate(true);const value=$('objectResults').value;const row=value===''?null:objectItems[Number(value)];$('objectId').value=row?.id||'';$('lsx').value=row?.production_order_code||'';};
       for(const id of ['quantity','checkedAt','note','result'])$(id).addEventListener('input',()=>window.QCFormUI.invalidate());
       $('qcForm').onsubmit=save;$('newCheck').onclick=nextDraft;
       $('closeEditor').onclick=$('closeEditorTop').onclick=()=>{if(!saving&&!window.QCFormUI.busy()){$('editor').hidden=true;driveEpoch++;objectEpoch++;}};

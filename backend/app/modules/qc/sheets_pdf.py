@@ -134,7 +134,11 @@ def render(db,user,obj,token,progress=None):
     content=export(token,temporary,gid,last_row,last_col)
     from app.modules.qc.pdf_signature import apply_signature
     if progress:progress('signature_pdf')
-    return apply_signature(content,saved,marker,background)
+    result=apply_signature(content,saved,marker,background)
+    if saved.get('production_sample_v1'):
+        from app.modules.qc.sample_pdf import append_confirmations
+        result=append_confirmations(result,saved)
+    return result
 
 
 def restore_snapshot(snap,gid):

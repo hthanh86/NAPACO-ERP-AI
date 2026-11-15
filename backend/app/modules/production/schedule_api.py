@@ -24,8 +24,8 @@ def scope(view_start:datetime|None=None,view_end:datetime|None=None,
 
 def ready(db):
     inspector=inspect(db.connection())
-    if not all(inspector.has_table(name) for name in ['production_order_items','production_schedule_plans','production_run_stops','production_schedule_days']):
-        fail('Kế hoạch theo ngày cần migration 012–014; hiện chưa sẵn sàng.',503)
+    if not all(inspector.has_table(name) for name in ['production_order_assignments','production_schedule_plans','production_run_stops','production_schedule_days']):
+        fail('Kế hoạch và phát LSX cần migration 015; hiện chưa sẵn sàng.',503)
 
 
 @router.post('/preview')

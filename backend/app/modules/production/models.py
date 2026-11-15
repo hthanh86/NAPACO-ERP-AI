@@ -15,6 +15,11 @@ class ProductionOrder(Base):
     __table__.append_column(Column('run_snapshot',JSON))
     __table__.append_column(Column('version',Integer,nullable=False,default=1,server_default='1'))
     __table__.append_column(Column('parent_run_id',String(100),ForeignKey('production_orders.id')))
+    __table__.append_column(Column('official_code',String(100),unique=True))
+    __table__.append_column(Column('released_at',DateTime))
+    __table__.append_column(Column('released_by',String(100),ForeignKey('users.id')))
+    __table__.append_column(Column('release_snapshot',JSON))
+    __table__.append_column(Column('release_state',String(20),nullable=False,default='draft',server_default='legacy'))
 
 
 class ProductionSetup(Base):
@@ -29,6 +34,8 @@ class FormingLog(Base):
     __table__.append_column(Column('shift_end',DateTime))
     __table__.append_column(Column('shift_snapshot',JSON))
     __table__.append_column(Column('version',Integer,nullable=False,default=1,server_default='1'))
+    __table__.append_column(Column('actual_machine_id',String(100)))
+    __table__.append_column(Column('assignment_id',String(36),ForeignKey('production_order_assignments.id')))
 
 
 class ProductionWIP(Base):

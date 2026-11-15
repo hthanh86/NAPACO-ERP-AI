@@ -42,7 +42,7 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
         scheduled=dict(db.execute(select(ProductionOrderItem.order_line_id,
             func.sum(ProductionOrderItem.planned_qty-ProductionOrderItem.completed_qty)).join(ProductionOrder,
             ProductionOrder.id==ProductionOrderItem.run_id).where(ProductionOrderItem.order_line_id.in_(line_ids),
-            ProductionOrder.status.in_(['Chưa chạy','Đang chạy'])).group_by(ProductionOrderItem.order_line_id)).all())
+            ProductionOrder.status.in_(['Chưa chạy','Đang chạy']),ProductionOrderItem.enabled.is_(True)).group_by(ProductionOrderItem.order_line_id)).all())
     allocations=db.scalars(select(Allocation).where(Allocation.order_line_id.in_(line_ids))).all()
     by_line=defaultdict(list)
     for a in allocations:by_line[a.order_line_id].append(a)
@@ -64,6 +64,8 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
         .where(issue_ct.in_(line_ids),func.upper(func.trim(FilmMovement.kind))=='CẤP NVL')).all()
     tracked=[m for m,link,ct in issued if link]
     balances=materials.issue_balances(db,tracked)
+    codes=dict(db.execute(select(ProductionOrder.id,ProductionOrder.official_code).where(
+        ProductionOrder.id.in_([m.production_order_id for m in tracked]))).all())
     issues_by_line=defaultdict(list)
     for movement,link,ct in issued:issues_by_line[ct].append((movement,link))
     expected_ids={r['film_line_id'] for r in rows if r['film_line_id']}
@@ -119,6 +121,10 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
                     at_machine+=b['at_machine_kg']
             else:at_machine+=b['at_machine_kg']
             row['issues'].append({'id':movement.id,'receipt_id':movement.receipt_id,'production_order_id':movement.production_order_id,
+                'official_code':codes.get(movement.production_order_id),
+                'handover_id':b['handover_id'] if b else None,'handover_state':b['handover_state'] if b else 'legacy_unverified',
+                'received_signed_kg':str(b['received_signed_kg']) if b else '0',
+                'pending_handover_kg':str(b['pending_handover_kg']) if b else '0',
                 'allocation_id':link.allocation_id if link else None,'issued_kg':str(movement.quantity),
                 'at_machine_kg':str(b['at_machine_kg']) if b and b['at_machine_kg'] is not None else None,
                 'balance_status':b['balance_status'] if b else 'unknown','pending_return_kg':str(b['pending_return_kg']) if b else None})

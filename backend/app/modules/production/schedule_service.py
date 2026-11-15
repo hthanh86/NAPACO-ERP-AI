@@ -41,9 +41,10 @@ def latest(db):return db.scalar(select(SchedulePlan).order_by(SchedulePlan.versi
 
 def dto(run,items,bindings):
     return {'id':run.id,'version':run.version,'status':run.status,'machine_id':run.machine_id,
+        'official_code':run.official_code,'release_state':run.release_state,
         'standard_id':run.standard_id,'parent_run_id':run.parent_run_id,'group_id':run.group_id,'snapshot':run.run_snapshot,
         'items':[{'order_line_id':i.order_line_id,'product_id':i.product_id,'planned_qty':integer(i.planned_qty,i.order_line_id),
-                  'completed_qty':integer(i.completed_qty,i.order_line_id),'cavity':i.cavity,'snapshot':i.snapshot} for i in items],
+                  'completed_qty':integer(i.completed_qty,i.order_line_id),'cavity':i.cavity,'snapshot':i.snapshot} for i in items if i.enabled],
         'materials':[{'allocation_id':m.allocation_id,'planned_kg':str(m.planned_kg),'issued_kg':str(m.issued_kg)} for m in bindings]}
 
 
@@ -209,8 +210,9 @@ def prepare(db,user,data,*,for_update=False):
             'start':start,'end':end,'reference':reference,'stage':stage,'order_line_ids':line_ids,'run_id':run_id,
             'items':list(evidence),'pure_seconds':pure_seconds}
         actual_keys[key]=entry;actual.append(entry)
-    legacy=db.execute(select(FormingLog,Run.machine_id,Run.order_line_id).join(Run,Run.id==FormingLog.production_order_id)
-        .where(Run.run_snapshot.is_(None),Run.machine_id.in_(list(machine_ids)),
+    from app.modules.production.release_service import machine_expression,historical_machine
+    legacy=db.execute(select(FormingLog,machine_expression(),Run.order_line_id).join(Run,Run.id==FormingLog.production_order_id)
+        .where(Run.run_snapshot.is_(None),machine_expression().in_(list(machine_ids)),
                FormingLog.run_date.between(data.start.astimezone(ZONE).date()-timedelta(days=1),data.end.astimezone(ZONE).date()))).all()
     for log,machine,ct in legacy:
         if not log.start_time or not log.end_time:material.fail('Nhật ký cũ thiếu giờ; cần đối soát trước khi xếp máy: '+log.id)
@@ -225,8 +227,10 @@ def prepare(db,user,data,*,for_update=False):
             if log.run_date and data.start.date()<=log.run_date<=data.end.date() and r['machine_id'] in machine_ids:
                 material.fail('Cần đối soát giờ nhật ký cũ trước khi xếp máy: '+log.id)
             continue
-        units={i['order_line_id']:i['snapshot']['unit'] for i in r['items']}
-        fixed(r['machine_id'],aware(log.shift_start),aware(log.shift_end),[i.order_line_id for i in shift_items[log.id]],log.id,run_id=r['id'],
+        units={i.order_line_id:i.snapshot['unit'] for i in items[r['id']]}
+        actual_machine=historical_machine(log)
+        if not actual_machine:material.fail('Nhật ký chưa xác định máy thực tế, cần đối soát: '+log.id,409)
+        fixed(actual_machine,aware(log.shift_start),aware(log.shift_end),[i.order_line_id for i in shift_items[log.id]],log.id,run_id=r['id'],
             evidence=[{'order_line_id':i.order_line_id,'good_qty':i.good_qty,'ng_qty':i.ng_qty,'unit':units.get(i.order_line_id)} for i in shift_items[log.id]],
             pure_seconds=log.shift_snapshot.get('pure_seconds'))
         fingerprints.append([log.id,log.version,log.shift_snapshot])
@@ -252,9 +256,10 @@ def prepare(db,user,data,*,for_update=False):
         if i.stage=='cutting':source_cut_good[(i.forming_log_id,i.order_line_id)]+=integer(i.good_qty,i.id)
     for (log_id,ct,stage),used in source_used.items():
         r=original[log_by_id[log_id].production_order_id]
-        item=next((i for i in r['items'] if i['order_line_id']==ct),None)
+        item=next((i for i in items[r['id']] if i.order_line_id==ct),None)
         if not item:material.fail('Công đoạn có CTĐH ngoài lần chạy: '+log_id)
-        capacity=source_cut_good[(log_id,ct)] if stage=='edge' and 'cutting' in item['snapshot']['route'] else source_good.get((log_id,ct),0)
+        product=(log_by_id[log_id].shift_snapshot or {}).get('items',{}).get(ct,item.snapshot)
+        capacity=source_cut_good[(log_id,ct)] if stage=='edge' and 'cutting' in product['route'] else source_good.get((log_id,ct),0)
         if used>capacity:material.fail('Công đoạn sau đã dùng vượt nguồn nhật ký '+log_id,409)
     for values in streams.values():
         for events in values.values():events.sort(key=lambda event:event['at'])
@@ -276,18 +281,10 @@ def prepare(db,user,data,*,for_update=False):
             final_actual[i['order_line_id']].extend(streams[r['id']].get((i['order_line_id'],stages[-1] if stages else 'forming'),[]))
     # Load machine balances and receipt availability in batches, not once per job.
     source_rows=db.scalars(select(ShiftMaterial).where(ShiftMaterial.log_id.in_(list(log_by_id)))).all()
-    assigned=defaultdict(set);positions=defaultdict(dict)
-    for s in source_rows:
-        log=log_by_id[s.log_id];rid=log.production_order_id;assigned[rid].update(s.movements)
-        if log.shift_end==last_end.get(rid):positions[rid][s.receipt_id]={'receipt_id':s.receipt_id,
-            'opening_kg':str(s.closing_kg),'input_kg':'0','output_kg':'0','movements':[]}
-    for m in db.scalars(select(FilmMovement).where(FilmMovement.production_order_id.in_(queue)).order_by(FilmMovement.id)):
-        if m.id in assigned[m.production_order_id]:continue
-        if m.kind not in {'CẤP NVL','TRẢ NVL'}:material.fail('Giao dịch nguồn chưa được hỗ trợ: '+m.id)
-        s=positions[m.production_order_id].setdefault(m.receipt_id,{'receipt_id':m.receipt_id,
-            'opening_kg':'0','input_kg':'0','output_kg':'0','movements':[]})
-        key='input_kg' if m.kind=='CẤP NVL' else 'output_kg';s[key]=str(D(s[key])+D(m.quantity));s['movements'].append(m.id)
-    selected_bindings=[b for rid in queue if virtual[rid]['status']!=runs.ENDED for b in virtual[rid]['materials']]
+    from app.modules.materials.inventory.handover_sources import source_contexts
+    material_contexts=source_contexts(db,queue,logs=logs,materials=source_rows)
+    positions={rid:{s['receipt_id']:s for s in c['sources']} for rid,c in material_contexts.items()}
+    selected_bindings=[b for rid in queue if virtual[rid]['status']!=runs.ENDED for b in virtual[rid]['materials'] if D(b['planned_kg'])>D(b['issued_kg'])]
     selected_allocation_ids={b['allocation_id'] for b in selected_bindings}
     all_allocations={a.id:a for a in read(select(Allocation).where(Allocation.id.in_(list(selected_allocation_ids))).order_by(Allocation.id))}
     total_required=defaultdict(Decimal)
@@ -312,6 +309,7 @@ def prepare(db,user,data,*,for_update=False):
             raise HTTPException(422,detail=error.detail) from error
         required=defaultdict(Decimal);own=[];held=Decimal(0)
         for b in r['materials'] if r['status']!=runs.ENDED else []:
+            if D(b['planned_kg'])<=D(b['issued_kg']):continue
             a=all_allocations.get(b['allocation_id'])
             if not a:material.fail('Phân bổ đã mất: '+b['allocation_id'],409)
             unissued=max(Decimal(0),D(b['planned_kg'])-D(b['issued_kg']));required[a.receipt_id]+=unissued;held+=unissued;own.append(a.id)
@@ -323,13 +321,14 @@ def prepare(db,user,data,*,for_update=False):
         measured=sum(source_kg,Decimal(0))
         if r['status']==runs.RUNNING and needed>0 and (identifier in last_end or measured>0):
             warnings.append({'code':'MACHINE_STOCK_AS_OF:'+identifier,'message':'Số dư tại máy là số chốt ca gần nhất cộng cấp/trả chưa chốt; phải đối chiếu trước khi chạy tiếp.','run_id':identifier})
-        if r['status']==runs.RUNNING and measured>0 and identifier not in last_end:
-            material.fail(identifier+': chưa có số dư chốt ca tại máy; không thể coi toàn bộ nhựa đã cấp là còn nguyên.',409)
-        if needed>held+measured:material.fail(identifier+': thiếu nhựa cho phần được bố trí; bổ sung phân bổ trước khi lưu.',409)
+        pending=sum((D(l['pending_handover_kg']) for l in material_contexts[identifier]['lots']),Decimal(0))
+        if pending>0:warnings.append({'code':'PENDING_HANDOVER:'+identifier,'message':'Có NVL chờ ký nhận; chỉ là nguồn kế hoạch, chưa được dùng để ghi sản xuất.','run_id':identifier})
+        if needed>held+measured+pending:material.fail(identifier+': thiếu nhựa cho phần được bố trí; bổ sung phân bổ trước khi lưu.',409)
         r['material']={'required_kg':str(needed),'held_unissued_kg':str(held),'machine_accounted_kg':str(measured),
-            'machine_balance_as_of':aware(position['previous_end']),'machine_balance_certainty':'last_closed_shift' if position['previous_end'] else 'movements_only'}
+            'pending_handover_kg':str(pending),'machine_balance_as_of':aware(position['previous_end']),
+            'machine_balance_certainty':'last_closed_shift_plus_signed_receipts'}
         r['material']['sources']=[{**s,'accounted_kg':str(kg)} for s,kg in zip(position['sources'],source_kg)]
-        stock_fingerprints.append([identifier,position]);context_runs.append(r)
+        stock_fingerprints.append([identifier,position,material_contexts[identifier]['lots']]);context_runs.append(r)
     stop_context=[]
     for s in stops.values():
         r=virtual.get(s['run_id'])
@@ -384,11 +383,33 @@ def save(db,user,data):
     exclusions={c.id for c in outcome['_configs']}|{e.run_id for e in data.end_runs}
     for config in outcome['_configs']:
         runs.save_run(db,user,config,config.id if config.id in outcome['_original'] else None,exclude_run_ids=exclusions,scheduling=True)
+    changed={c.id for c in outcome['_configs']}
+    old=latest(db)
+    old_policies={p['run_id']:p for p in old.request.get('jobs',[])} if old else {}
+    affected=changed|set(data.unschedule)|{p.run_id for p in data.jobs if encoded(p.model_dump())!=old_policies.get(p.run_id)}
+    for identifier in affected-changed:
+        run=db.get(Run,identifier)
+        if run:run.version+=1
     for patch in data.stops:
         value=outcome['_stops'][patch.id];row=db.get(RunStop,patch.id)
         if not row:row=RunStop(id=patch.id);db.add(row)
         for key in ['run_id','version','duration_seconds','hold_machine','enabled','note']:setattr(row,key,value[key])
         row.started_at=runs.local(value['at'])
+        if row.enabled:
+            from app.modules.production.sample_service import EPISODE,info,stamp
+            from app.modules.production.models import ProductionSetup
+            # A recorded stop bounds this actual episode permanently. Disabling
+            # the stop later must not silently resurrect its sample clearance.
+            for setup in db.scalars(select(ProductionSetup).where(ProductionSetup.production_order_id==row.run_id).with_for_update()):
+                episode=info(setup)
+                if not episode:continue
+                opened=stamp(episode['opened_at']);until=stamp(episode['valid_until'])
+                finish=row.started_at+timedelta(seconds=row.duration_seconds) if row.duration_seconds is not None else None
+                if row.started_at<until and (row.started_at>=opened or finish is None or finish>opened):
+                    setup.source={**setup.source,EPISODE:{**episode,'version':episode['version']+1,
+                        'valid_until':max(opened,row.started_at).isoformat(),'bounded_by_stop':row.id}}
+                    material.audit(db,user,'PRODUCTION_SAMPLE_BOUND_BY_STOP',setup.id,
+                        {'stop_id':row.id,'previous_valid_until':episode['valid_until'],'stop_at':row.started_at.isoformat()})
     db.flush()
     # Same engine, now from committed-intent state; no duplicate action application.
     canonical=outcome['_canonical']
@@ -399,6 +420,10 @@ def save(db,user,data):
     plan=SchedulePlan(id=identifier,version=version,request=encoded(canonical),result=result,
         source_hash=fresh['preview_hash'],created_by=user.id,context=encoded(fresh['_snapshot_context']))
     db.add(plan);db.flush()
+    from app.modules.production.release_service import sync_assignments
+    for affected_id in affected:
+        run=db.get(Run,affected_id)
+        if run:sync_assignments(db,user,run,plan,force=True)
     from app.modules.production import schedule_daily
     day=schedule_daily.update(db,user,plan,data)
     material.audit(db,user,'PRODUCTION_SCHEDULE_SAVE',identifier,{'version':version,'preview_hash':data.preview_hash,

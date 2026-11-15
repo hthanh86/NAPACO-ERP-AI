@@ -50,8 +50,20 @@ def context(db, kind, identifier, lsx=None):
             products = db.execute(select(Product.id, Product.name).join(OrderLine, OrderLine.product_id == Product.id)
                 .where(OrderLine.film_line_id == row['po_line_id']).distinct().order_by(Product.id)).all()
     elif lsx:
-        products = db.execute(select(Product.id, Product.name).join(ProductionOrder, ProductionOrder.product_id == Product.id)
-                              .where(ProductionOrder.id == lsx)).all()
+        from app.modules.production.models import ProductionSetup
+        from app.modules.production.run_models import ProductionOrderItem
+        setup=db.get(ProductionSetup,identifier) if kind=='SETUP' else None
+        episode=(setup.source or {}).get('sample_episode_v1') if setup else None
+        if episode:
+            products=db.execute(select(Product.id,Product.name).join(ProductionOrderItem,ProductionOrderItem.product_id==Product.id)
+                .where(ProductionOrderItem.run_id==lsx,ProductionOrderItem.order_line_id.in_(episode['line_ids']))
+                .distinct().order_by(Product.id)).all()
+            run=db.get(ProductionOrder,lsx)
+            result.update(production_order_id=run.official_code,machine_id=setup.machine_id,setup_id=setup.id,
+                order_line_ids=', '.join(episode['line_ids']))
+        else:
+            products = db.execute(select(Product.id, Product.name).join(ProductionOrder, ProductionOrder.product_id == Product.id)
+                                  .where(ProductionOrder.id == lsx)).all()
     result['product_ids'] = ', '.join(product.id for product in products)
     result['product_names'] = ', '.join(product.name for product in products)
     return result, {product.id for product in products}
@@ -112,6 +124,37 @@ def typed(value, kind, label):
         raise HTTPException(422, 'Sai kiểu dữ liệu ở tiêu chí: ' + label) from None
 
 
+def normalized_answers(fields, entered, *, complete=True):
+    criteria = [field for field in fields if field['kind'] == 'INPUT']
+    answers = {answer.id:answer for answer in entered.answers}
+    if len(answers) != len(entered.answers) or set(answers) != {field['id'] for field in criteria}:
+        raise HTTPException(422, 'Danh sách tiêu chí bị thiếu, thừa hoặc trùng mã.')
+    normalized, evaluations = [], []
+    for field in criteria:
+        answer = answers[field['id']]
+        actual = answer.actual
+        if answer.assessment is None:
+            if complete and (field['required'] or actual):
+                raise HTTPException(422, 'Cần chọn đánh giá cho ' + field['name'])
+        elif answer.assessment == 'NA':
+            # Current QC policy permits skipping any criterion, including older mappings.
+            actual = ''
+        else:
+            if complete and field['required'] and not actual:
+                raise HTTPException(422, 'Thiếu kết quả thực tế: ' + field['name'])
+            if actual:
+                actual = typed(actual, field['data_type'], field['name'])
+        normalized.append({'id':answer.id, 'actual':actual, 'assessment':answer.assessment, 'note':answer.note})
+        if answer.assessment:
+            evaluations.append(answer.assessment)
+    if complete and not any(value in {'PASS','FAIL'} for value in evaluations):
+        raise HTTPException(422, 'Cần ít nhất một tiêu chí Đạt hoặc Không đạt để kết luận; không thể để toàn bộ Không áp dụng.')
+    conclusion = 'FAIL' if 'FAIL' in evaluations else 'PASS'
+    if complete and entered.conclusion != conclusion:
+        raise HTTPException(422, 'Kết luận phải khớp đánh giá các tiêu chí áp dụng.')
+    return normalized, conclusion if complete else entered.conclusion
+
+
 def filled(db, user, data, qc_id, lsx, existing=None):
     if existing:
         saved = existing.form_data
@@ -145,31 +188,7 @@ def filled(db, user, data, qc_id, lsx, existing=None):
     if not definition['mapping'].get('signature_cell'):
         raise HTTPException(422, 'Quản lý cần xác định và phê duyệt vị trí chữ ký trên template trước khi lưu.')
     fields = definition['mapping']['fields']
-    criteria = [field for field in fields if field['kind'] == 'INPUT']
-    answers = {answer.id:answer for answer in entered.answers}
-    if len(answers) != len(entered.answers) or set(answers) != {field['id'] for field in criteria}:
-        raise HTTPException(422, 'Danh sách tiêu chí bị thiếu, thừa hoặc trùng mã.')
-    normalized, evaluations = [], []
-    for field in criteria:
-        answer = answers[field['id']]
-        actual = answer.actual
-        if answer.assessment is None:
-            if field['required'] or actual:
-                raise HTTPException(422, 'Cần chọn đánh giá cho ' + field['name'])
-        elif answer.assessment == 'NA':
-            # Current QC policy permits skipping any criterion, including older mappings.
-            actual = ''
-        else:
-            if field['required'] and not actual:
-                raise HTTPException(422, 'Thiếu kết quả thực tế: ' + field['name'])
-            if actual:
-                actual = typed(actual, field['data_type'], field['name'])
-        normalized.append({'id':answer.id, 'actual':actual, 'assessment':answer.assessment, 'note':answer.note})
-        if answer.assessment:
-            evaluations.append(answer.assessment)
-    if not any(value in {'PASS','FAIL'} for value in evaluations):
-        raise HTTPException(422, 'Cần ít nhất một tiêu chí Đạt hoặc Không đạt để kết luận; không thể để toàn bộ Không áp dụng.')
-    conclusion = 'FAIL' if 'FAIL' in evaluations else 'PASS'
+    normalized, conclusion = normalized_answers(fields, entered)
     if entered.conclusion != conclusion or data.result != {'PASS':'OK','FAIL':'NG'}[conclusion]:
         raise HTTPException(422, 'Kết luận phải khớp đánh giá các tiêu chí áp dụng.')
     values.update(qc_id=qc_id, check_type=data.check_type, checked_at=serialized(data.checked_at),

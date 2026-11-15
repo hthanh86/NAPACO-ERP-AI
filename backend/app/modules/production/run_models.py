@@ -1,5 +1,5 @@
 """Extensions to existing LSX/logs; no second run/order header model."""
-from sqlalchemy import Column,String,Integer,Numeric,JSON,DateTime,ForeignKey,CheckConstraint,Index
+from sqlalchemy import Column,String,Integer,Numeric,JSON,DateTime,ForeignKey,CheckConstraint,Index,Boolean,true
 from app.core.database import Base
 
 
@@ -12,6 +12,22 @@ class ProductionOrderItem(Base):
     planned_qty=Column(Numeric(24,8),nullable=False)
     completed_qty=Column(Numeric(24,8),nullable=False,default=0)
     cavity=Column(Integer,nullable=False)
+    snapshot=Column(JSON,nullable=False)
+    enabled=Column(Boolean,nullable=False,default=True,server_default=true())
+
+
+class ProductionAssignment(Base):
+    __tablename__='production_order_assignments'
+    __table_args__=(Index('ix_assignment_machine','machine_id','stage','ended_at'),Index('ix_assignment_run','run_id','ended_at'))
+    id=Column(String(36),primary_key=True)
+    run_id=Column(ForeignKey('production_orders.id'),nullable=False)
+    stage=Column(String(20),nullable=False)
+    machine_id=Column(ForeignKey('production_machines.id'),nullable=False)
+    order_line_id=Column(ForeignKey('order_lines.id'))
+    started_at=Column(DateTime,nullable=False)
+    ended_at=Column(DateTime)
+    plan_id=Column(ForeignKey('production_schedule_plans.id'),nullable=False)
+    created_by=Column(ForeignKey('users.id'),nullable=False)
     snapshot=Column(JSON,nullable=False)
 
 

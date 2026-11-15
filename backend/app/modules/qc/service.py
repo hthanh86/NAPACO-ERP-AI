@@ -18,7 +18,7 @@ from app.auth.models import User
 from app.core.performance import measure
 
 ALLOWED = {'QC NVL': {'NVL'}, 'QC ĐẦU CA': {'SETUP'},
-           'QC GIỮA CA': {'HUT', 'CAT', 'EB'}, 'QC CUỐI CA': {'HUT', 'CAT', 'EB'}}
+           'QC GIỮA CA': {'SETUP', 'HUT', 'CAT', 'EB'}, 'QC CUỐI CA': {'SETUP', 'HUT', 'CAT', 'EB'}}
 MODELS = {'NVL': FilmReceipt, 'SETUP': ProductionSetup, 'HUT': FormingLog, 'CAT': CuttingLog, 'EB': EBLog}
 TIMEZONE = ZoneInfo('Asia/Ho_Chi_Minh')
 
@@ -35,7 +35,9 @@ def object_query(kind):
                       model.line_id.label('reference'), model.location.label('info'))
     if kind == 'SETUP':
         return select(model.id, model.production_order_id, model.checked_at.label('date'),
-                      model.machine_id.label('reference'), model.stage.label('info'))
+                      model.machine_id.label('reference'), model.stage.label('info'),
+                      ProductionOrder.official_code.label('production_order_code')).join(
+                          ProductionOrder,ProductionOrder.id==model.production_order_id).where(ProductionOrder.release_state=='released')
     statement = select(model.id,
                        func.coalesce(func.nullif(model.production_order_id, ''), ProductionSetup.production_order_id).label('production_order_id')
                        if kind == 'HUT' else func.coalesce(ProductionSetup.production_order_id,FormingLog.production_order_id).label('production_order_id'),
@@ -44,6 +46,10 @@ def object_query(kind):
     statement = statement.outerjoin(ProductionSetup, ProductionSetup.id == model.setup_id)
     if kind in {'CAT','EB'}:
         statement = statement.outerjoin(FormingLog,FormingLog.id==model.order_ref)
+    lsx=(func.coalesce(func.nullif(model.production_order_id,''),ProductionSetup.production_order_id) if kind=='HUT'
+         else func.coalesce(ProductionSetup.production_order_id,FormingLog.production_order_id))
+    statement=statement.outerjoin(ProductionOrder,ProductionOrder.id==lsx).where(ProductionOrder.release_state=='released')
+    statement=statement.add_columns(ProductionOrder.official_code.label('production_order_code'))
     return statement
 
 
@@ -82,6 +88,9 @@ def resolve_object(db, data, existing=None):
             lsx = forming.production_order_id if forming else ''
     if lsx and db.scalar(select(ProductionOrder.id).where(ProductionOrder.id == lsx).with_for_update()) is None:
         raise HTTPException(422, 'Nguồn tham chiếu LSX chưa có trong bảng lệnh sản xuất: ' + lsx)
+    if lsx and not unchanged:
+        from app.modules.production.release_service import require_released
+        require_released(db.get(ProductionOrder,lsx))
     return obj.id, lsx or None
 
 
@@ -107,6 +116,7 @@ def staff_name(db, identifier):
 
 def detail_record(db, obj):
     result = record(obj)
+    result['production_order_code']=db.scalar(select(ProductionOrder.official_code).where(ProductionOrder.id==obj.production_order_id)) if obj.production_order_id else None
     result['staff_name'] = staff_name(db, obj.staff_id)
     result['form_document_id'] = forms.document_id(obj.id) if obj.form_data and not obj.template_id else None
     result['evidence'] = ('https://drive.google.com/drive/folders/'+obj.drive_folder_id) if obj.drive_folder_id else obj.image_url
@@ -242,18 +252,11 @@ def create_records(db, user, items, request_id, batch=True):
     for data in sorted(items, key=lambda item: (item.object_type, item.object_id.casefold())):
         resolved[(data.object_type, data.object_id)] = resolve_object(db, data)
     # Same sequence and locking pattern as orders; seed from imported QC codes.
-    day = datetime.now(TIMEZONE).strftime('%y%m%d')
-    prefix = 'QC_' + day + '_'
-    db.execute(insert(Sequence).values(name='QC_' + day, value=0).on_duplicate_key_update(name='QC_' + day))
-    sequence = db.scalar(select(Sequence).where(Sequence.name == 'QC_' + day).with_for_update())
-    existing = db.scalars(select(QualityCheck.id).where(QualityCheck.id.startswith(prefix, autoescape=True))).all()
-    highest = max([int(code[len(prefix):]) for code in existing if code[len(prefix):].isdigit()] + [sequence.value])
-    if highest + len(items) > 99:
-        raise HTTPException(422, 'Không còn đủ mã QC trong giới hạn 99 phiếu/ngày. Chưa tạo phiếu nào trong lô này.')
+    identifiers = next_identifiers(db, len(items))
     results = []
     for offset, data in enumerate(items, 1):
         identifier, lsx = resolved[(data.object_type, data.object_id)]
-        obj = QualityCheck(id=prefix + str(highest+offset).zfill(2), staff_id=user.id, ncr_id='', source={})
+        obj = QualityCheck(id=identifiers[offset-1], staff_id=user.id, ncr_id='', source={})
         apply_values(db, obj, data, identifier, lsx, user)
         if data.form or data.mapped_form:
             drive_bundle.schedule(obj, user, data.parent_folder_id, data.evidence_manifest)
@@ -268,7 +271,6 @@ def create_records(db, user, items, request_id, batch=True):
         db.add(Audit(user_id=user.id, action='QC_CREATE', entity_id=obj.id,
                      details={'object_type':obj.object_type, 'object_id':obj.object_id,
                               'signing_hash':(obj.form_data or {}).get('signer',{}).get('content_hash')}))
-    sequence.value = highest + len(items)
     result = {'items':results} if batch else results[0]
     request.result = result
     with measure('qc.mysql_commit'):
@@ -276,11 +278,27 @@ def create_records(db, user, items, request_id, batch=True):
     return finish_evidence(db, user, result, batch)
 
 
+def next_identifiers(db, count):
+    """Shared daily QC sequence, including unsigned production sample drafts."""
+    day = datetime.now(TIMEZONE).strftime('%y%m%d')
+    prefix = 'QC_' + day + '_'
+    db.execute(insert(Sequence).values(name='QC_' + day, value=0).on_duplicate_key_update(name='QC_' + day))
+    sequence = db.scalar(select(Sequence).where(Sequence.name == 'QC_' + day).with_for_update())
+    existing = db.scalars(select(QualityCheck.id).where(QualityCheck.id.startswith(prefix, autoescape=True))).all()
+    highest = max([int(code[len(prefix):]) for code in existing if code[len(prefix):].isdigit()] + [sequence.value])
+    if highest + count > 99:
+        raise HTTPException(422, 'Không còn đủ mã QC trong giới hạn 99 phiếu/ngày. Chưa tạo phiếu nào trong lô này.')
+    sequence.value = highest + count
+    return [prefix + str(highest+offset).zfill(2) for offset in range(1,count+1)]
+
+
 @measure('qc.update_total')
 def update(db, user, identifier, data):
     obj = db.scalar(select(QualityCheck).where(QualityCheck.id == identifier).with_for_update())
     if obj is None:
         raise HTTPException(404, 'Không tìm thấy phiếu QC.')
+    if (obj.form_data or {}).get('production_sample_v1'):
+        raise HTTPException(409, 'Phiếu mẫu cần cập nhật/hủy qua luồng kiểm mẫu để bảo toàn chữ ký và nhật ký liên quan.')
     from app.modules.qc.job_models import QCJob
     pending=db.scalar(select(QCJob).where(QCJob.qc_id==identifier).with_for_update())
     if pending and pending.status in {'PENDING','PROCESSING'}:

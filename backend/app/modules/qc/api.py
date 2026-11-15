@@ -53,6 +53,8 @@ def objects(check_type: CheckType, object_type: ObjectType, q: str = Query('', m
     statement = service.object_query(object_type)
     # The source type comes only from the fixed model mapping, never raw SQL.
     conditions = [model.id.contains(q.strip(), autoescape=True)]
+    from app.modules.production.models import ProductionOrder
+    conditions.append(ProductionOrder.official_code.contains(q.strip(),autoescape=True))
     for attr in ('production_order_id', 'setup_id', 'machine_id', 'line_id'):
         if hasattr(model, attr):
             conditions.append(getattr(model, attr).contains(q.strip(), autoescape=True))
@@ -117,6 +119,8 @@ def download_pdf(identifier: str, user=Depends(current_user), db=Depends(get_db)
     obj = db.get(QualityCheck, identifier)
     if obj is None or not obj.form_data:
         raise HTTPException(404, 'Phiếu chưa có biểu mẫu ERP.')
+    if (obj.form_data or {}).get('production_sample_v1',{}).get('state') not in {None,'signed'}:
+        raise HTTPException(409,'Phiếu mẫu chưa đủ xác nhận hoặc đã hủy; chưa có bản phiếu dùng chạy.')
     if obj.template_id:
         return RedirectResponse(drive_bundle.pdf_link(db,user,obj),status_code=303)
     try:
@@ -202,7 +206,9 @@ def listing(q: str = Query('', max_length=100), check_type: CheckType | None = N
     fields = ['id', 'checked_at', 'check_type', 'object_type', 'object_id', 'production_order_id',
               'quantity', 'result', 'staff_id', 'standard_url', 'drive_folder_id']
     from app.modules.qc.job_models import QCJob
+    from app.modules.production.models import ProductionOrder
     rows = db.execute(select(*[getattr(QualityCheck, key) for key in fields],
+                             select(ProductionOrder.official_code).where(ProductionOrder.id==QualityCheck.production_order_id).scalar_subquery().label('production_order_code'),
                              QCJob.status.label('sync_status'),QCJob.current_step.label('sync_step'),
                              QCJob.last_error.label('sync_error'),QCJob.attempts.label('sync_attempts'),
                              User.name.label('staff_name'), QualityCheck.image_url.label('evidence'),
