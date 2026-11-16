@@ -1,4 +1,4 @@
-"""Daily pointers to immutable schedule snapshots; caller owns ERP transaction."""
+"""Frozen daily initial plan and replaceable current update; caller owns ERP transaction."""
 from datetime import datetime,timezone
 from sqlalchemy import select
 from app.modules.production.schedule_models import ScheduleDay,SchedulePlan
@@ -47,9 +47,22 @@ def source(db,day=None):
 def update(db,user,plan,data):
     check_request(db,data,lock=True);day=today();row=get_day(db,day,True)
     if not row:row=ScheduleDay(day=day,scope=SCOPE,version=0);db.add(row)
+    if not row.initial_plan_id:
+        row.initial_plan_id=plan.id;row.initial_closed_at=datetime.now(timezone.utc).replace(tzinfo=None);row.initial_closed_by=user.id
+        audit(db,user,'PRODUCTION_DAY_CLOSE',str(day),{'plan_id':plan.id,'basis':'first_save'})
     row.update_plan_id=plan.id;row.version+=1;row.updated_at=datetime.now(timezone.utc).replace(tzinfo=None);row.updated_by=user.id
     audit(db,user,'PRODUCTION_DAY_UPDATE',str(day),{'plan_id':plan.id,'version':row.version})
     db.flush();return metadata(row)
+
+
+def mutable_plan(db):
+    row=get_day(db,today(),True)
+    if not row or not row.update_plan_id or row.update_plan_id==row.initial_plan_id:return None
+    # A document used by another day must remain untouched.
+    shared=db.scalar(select(ScheduleDay.day).where(ScheduleDay.day!=today(),
+        (ScheduleDay.update_plan_id==row.update_plan_id)|(ScheduleDay.initial_plan_id==row.update_plan_id)).limit(1))
+    if shared:return None
+    return db.get(SchedulePlan,row.update_plan_id)
 
 
 def close(db,user,data):

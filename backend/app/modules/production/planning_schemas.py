@@ -36,6 +36,7 @@ class StandardInput(Input):
     extra_mold_ids:list[Key]=Field(default_factory=list,max_length=20)
     film_width_mm:Positive|None=None
     resin:str=Field('',max_length=100)
+    mold_geometry_confirmed:bool=False
     pull_mm: Positive
     seconds_per_cycle: Positive
     density: Positive  # g/cm³; original purchasing convention

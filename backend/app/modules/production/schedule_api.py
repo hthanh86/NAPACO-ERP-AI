@@ -71,6 +71,16 @@ def preview(data:ScheduleInput,user=Depends(access),db=Depends(get_db),view=Depe
         with db.no_autoflush:outcome=service.prepare(db,user,data,reason_view=view)
         projected=schedule_view.project(db,outcome['result'],outcome['_canonical'],data.base_version,configs=outcome['_configs'],**view)
         projected['day']=outcome['_snapshot_context']['day']
+        jobs={job['run_id']:job for job in outcome['result']['jobs']}
+        labels=outcome['_snapshot_context']['lines']
+        visible={job['run_id'] for job in projected['result']['jobs']}
+        for warning in outcome['warnings']:
+            job=jobs.get(warning.get('run_id'))
+            if not job:continue
+            line_ids=[item['order_line_id'] for item in job.get('planned_items',[])]
+            warning.update(machine_id=job['machine_id'],order_line_ids=line_ids,
+                product_names=list(dict.fromkeys(labels.get(identifier,{}).get('product_name') or identifier for identifier in line_ids)),
+                outside_view=job['run_id'] not in visible or next((row.get('outside_view',False) for row in projected['result']['jobs'] if row['run_id']==job['run_id']),False))
         return service.encoded({'preview_hash':outcome['preview_hash'],'base_version':data.base_version,
             'warnings':outcome['warnings'],'workspace':projected})
     return service.encoded(service.preview(db,user,data))

@@ -1,4 +1,4 @@
-"""Immutable schedule snapshots and explicit run stop controls, not new orders."""
+"""Daily schedule documents and explicit run stop controls, not new orders."""
 from datetime import datetime
 from sqlalchemy import Column,String,Integer,JSON,DateTime,Date,Boolean,ForeignKey,Index
 from app.core.database import Base

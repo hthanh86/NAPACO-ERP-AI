@@ -108,7 +108,7 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
     if machine.max_pull_mm and D(params['pull_mm'])>machine.max_pull_mm:fail('Bước kéo vượt máy.')
     for tool in standard.snapshot.get('molds') or [mold]:
         if D(tool.get('Dai_Khuon') or 0)>D(params['pull_mm']) or D(tool.get('Rong_Khuon') or 0)>D(params['film_width_mm']):
-            fail('Khổ/kéo màng của lần chạy nhỏ hơn một khuôn trong định mức.')
+            if not params.get('mold_geometry_confirmed'):fail('Khổ/kéo màng nhỏ hơn khuôn. Cần xác nhận và lưu định mức mới qua màn hình tạo lần chạy.')
     geometry_changed=(D(params['pull_mm'])!=D(standard.parameters['pull_mm']) or
         D(params['film_width_mm'])!=D(standard.parameters.get('film_width_mm') or spec['width']))
     params['sheet_weight_kg']=(data.sheet_weight_kg if data.sheet_weight_kg is not None and not geometry_changed else

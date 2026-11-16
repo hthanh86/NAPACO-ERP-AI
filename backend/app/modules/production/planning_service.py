@@ -175,10 +175,14 @@ def save_standard(db,user,data,previous_id=None,*,identifier=None):
     mold=molds[0]
     width=data.film_width_mm or float(material.width)
     if abs(width-float(material.width))>0.0001:fail('Khổ màng định mức khác khổ NVL. Chọn mã NVL có đúng khổ hoặc sửa khổ định mức theo NVL sử dụng.')
-    for tool in molds:
-        try:mw,ml=float(tool.get('Rong_Khuon') or 0),float(tool.get('Dai_Khuon') or 0)
-        except (TypeError,ValueError):fail('Kích thước khuôn không hợp lệ.')
-        if mw<=0 or ml<=0 or mw>width or ml>data.pull_mm:fail('Khổ màng/kéo màng không đủ cho khuôn đã chọn.')
+    try:
+        if any(float(tool.get('Rong_Khuon') or 0)<=0 or float(tool.get('Dai_Khuon') or 0)<=0 for tool in molds):fail('Kích thước khuôn không hợp lệ.')
+        recommended_width=sum(float(tool.get('Rong_Khuon') or 0) for tool in molds)+40
+        recommended_pull=max(float(tool.get('Dai_Khuon') or 0) for tool in molds)+60
+    except (TypeError,ValueError):fail('Kích thước khuôn không hợp lệ.')
+    if (width<recommended_width or data.pull_mm<recommended_pull) and not data.mold_geometry_confirmed:
+        raise HTTPException(422,detail={'code':'MOLD_GEOMETRY_CONFIRMATION_REQUIRED',
+            'message':f'Khuyến nghị tối thiểu: khổ màng {recommended_width:g} mm, kéo màng {recommended_pull:g} mm. Cần xác nhận nếu dùng thông số nhỏ hơn.'})
     ids = [i.product_id for i in data.items]
     products = {p.id:p for p in db.scalars(select(Product).where(Product.id.in_(ids))).all()}
     if len(products)!=len(ids):

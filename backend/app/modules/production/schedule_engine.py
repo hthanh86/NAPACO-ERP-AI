@@ -344,6 +344,8 @@ def calculate(context):
         complete=known+planned>=line['quantity'] and not unknown
         end=max([*times,*([line['actual_finished_at']] if line['actual_finished_at'] else [])]) if complete and (times or line['actual_finished_at']) else None
         record={'order_line_id':line['id'],'order_id':line['order_id'],'unit':line['unit'],
+            'product_name':context.get('line_labels',{}).get(line['id'],{}).get('product_name'),
+            'customer_name':context.get('line_labels',{}).get(line['id'],{}).get('customer_name'),
             'known_finished_qty':known,'planned_finished_qty':planned,'remaining_unscheduled_qty':max(0,line['quantity']-known-planned),
             'first_planned_finished_at':min(times) if times else None,'all_finished_at':end,
             'certainty':'unknown' if not complete else 'estimated' if any(e['estimated'] for e in future) else 'scheduled',

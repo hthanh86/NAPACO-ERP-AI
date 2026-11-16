@@ -57,22 +57,24 @@ def moved_config(run,move):
         **{k:p[k] for k in ['seconds_per_cycle','pull_mm','setup_minutes','sheet_weight_kg','waste_percent']},'note':move.note})
 
 
-def prepare(db,user,data,*,for_update=False,reason_view=None):
+def prepare(db,user,data,*,for_update=False,reason_view=None,planning_now=None):
     """Preview uses SELECT only. Save invokes this under the shared ERP write lock."""
     base=latest(db);version=base.version if base else 0
-    planning_now=datetime.now(ZONE).replace(second=0,microsecond=0)
+    planning_now=planning_now or datetime.now(ZONE).replace(second=0,microsecond=0)
     old_jobs={j['run_id']:j for j in (base.result.get('jobs',[]) if base else [])}
+    actual_ids=set(db.scalars(select(FormingLog.production_order_id).where(FormingLog.production_order_id.in_(list(old_jobs))).distinct())) if old_jobs else set()
     past=set()
     for identifier,job in old_jobs.items():
         start=job.get('allocation_start') or next((span['start'] for span in [*job.get('setup_segments',[]),*job.get('forming_segments',[])]),None)
-        if start and datetime.fromisoformat(str(start))<planning_now:past.add(identifier)
+        if identifier in actual_ids and start and datetime.fromisoformat(str(start))<planning_now:past.add(identifier)
     previous_policies={p['run_id']:JobPolicy.model_validate(p).model_dump(mode='json') for p in (base.request.get('jobs',[]) if base else [])}
     changed_policies={p.run_id for p in data.jobs if p.model_dump(mode='json')!=previous_policies.get(p.run_id)}
     edits={c.config.id for c in data.changes}|{m.run_id for m in data.moves}|set(data.unschedule)|changed_policies
-    if edits&past:material.fail('Không được thay đổi kế hoạch đã bắt đầu trong quá khứ. Chỉ xem lại lịch đã lưu.',409)
+    if edits&past:material.fail('Kế hoạch này đã có nhật ký thực tế; không sửa phần đã thực hiện.',409)
     for policy in data.jobs:
         if policy.run_id in edits and policy.ready_at and policy.ready_at<planning_now:
-            material.fail('Không được chọn thời gian bắt đầu trong quá khứ.',422)
+            if policy.run_id in old_jobs and policy.run_id not in actual_ids:policy.ready_at=None
+            else:material.fail('Không được chọn thời gian bắt đầu trong quá khứ.',422)
 
     if data.base_version!=version:material.fail('Kế hoạch đã thay đổi; tính thử lại với phiên bản mới.',409)
     from app.modules.production import schedule_daily
@@ -320,7 +322,9 @@ def prepare(db,user,data,*,for_update=False,reason_view=None):
     context_runs=[];stock_fingerprints=[balances,[material.allocation_record(a) for a in all_allocations.values()]]
     for identifier in queue:
         r=virtual[identifier];r={**r,'policy':policies.get(identifier,JobPolicy(run_id=identifier).model_dump()),
-            'future_only':identifier not in original or identifier in edits,
+            # A saved but unexecuted run is still future work, including the
+            # second calculation after applying configs during save.
+            'future_only':identifier not in original or identifier in edits or (r['status']!=runs.ENDED and identifier not in last_end),
             'has_actual':identifier in last_end,'actual_end':aware(last_end.get(identifier)),
             'streams':streams[identifier],'processed':processed[identifier]}
         if r['snapshot'].get('parameters',{}).get('planned_cycles_limit') is not None:
@@ -405,7 +409,7 @@ def prepare(db,user,data,*,for_update=False,reason_view=None):
         'day':day_state}
     source_hash=digest([source_hash,snapshot_context])
     return {'preview_hash':source_hash,'base_version':version,'result':result,'warnings':warnings,
-        '_configs':configs,'_stops':stops,'_canonical':canonical,'_original':original,'_snapshot_context':snapshot_context}
+        '_planning_now':planning_now,'_configs':configs,'_stops':stops,'_canonical':canonical,'_original':original,'_snapshot_context':snapshot_context}
 
 
 def preview(db,user,data):
@@ -458,12 +462,18 @@ def save(db,user,data,*,reason_view=None):
     # Same engine, now from committed-intent state; no duplicate action application.
     canonical=outcome['_canonical']
     clean=ScheduleInput.model_validate({'base_version':data.base_version,**encoded(canonical)})
-    fresh=prepare(db,user,clean,for_update=True,reason_view=reason_view)
-    identifier=str(uuid4());version=data.base_version+1
-    result=encoded(fresh['result'])
-    plan=SchedulePlan(id=identifier,version=version,request=encoded(canonical),result=result,
-        source_hash=fresh['preview_hash'],created_by=user.id,context=encoded(fresh['_snapshot_context']))
-    db.add(plan);db.flush()
+    fresh=prepare(db,user,clean,for_update=True,reason_view=reason_view,planning_now=outcome['_planning_now'])
+    from app.modules.production import schedule_daily
+    plan=schedule_daily.mutable_plan(db)
+    identifier=plan.id if plan else str(uuid4());version=data.base_version+1
+    values={'version':version,'request':encoded(canonical),'result':encoded(fresh['result']),
+        'source_hash':fresh['preview_hash'],'created_by':user.id,'context':encoded(fresh['_snapshot_context']),
+        'created_at':datetime.utcnow()}
+    if plan:
+        for key,value in values.items():setattr(plan,key,value)
+    else:
+        plan=SchedulePlan(id=identifier,**values);db.add(plan)
+    db.flush()
     from app.modules.production.release_service import sync_assignments
     for affected_id in affected:
         run=db.get(Run,affected_id)
@@ -474,4 +484,4 @@ def save(db,user,data,*,reason_view=None):
         'stops':encoded(data.stops),'changed_runs':[c.id for c in outcome['_configs']],
         'ended_runs':[e.run_id for e in data.end_runs],'unscheduled':data.unschedule})
     db.flush()
-    return {'id':identifier,'version':version,'result':result,'source_hash':fresh['preview_hash'],'day':day}
+    return {'id':identifier,'version':version,'result':plan.result,'source_hash':fresh['preview_hash'],'day':day}

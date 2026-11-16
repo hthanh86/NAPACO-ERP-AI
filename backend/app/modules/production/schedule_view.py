@@ -42,7 +42,7 @@ def editor(db,identifier):
     actual=db.scalar(select(FormingLog.id).where(FormingLog.production_order_id==identifier).limit(1))
     saved=service.latest(db);saved_job=next((j for j in saved.result.get('jobs',[]) if j['run_id']==identifier),{}) if saved else {}
     saved_start=saved_job.get('allocation_start') or next((span['start'] for span in [*saved_job.get('setup_segments',[]),*saved_job.get('forming_segments',[])]),None)
-    data['past_plan']=bool(saved_start and datetime.fromisoformat(str(saved_start))<datetime.now(ZONE).replace(second=0,microsecond=0))
+    data['past_plan']=bool(actual and saved_start and datetime.fromisoformat(str(saved_start))<datetime.now(ZONE).replace(second=0,microsecond=0))
     data['can_edit']=run.status!=service.runs.ENDED and not data['past_plan']
     return data
 
@@ -86,14 +86,17 @@ def project(db,result,canonical,version,start,end,machine_id='',customer_id='',q
         actual_visible=any(a.get('run_id')==job['run_id'] and overlaps(a) and
             (related or not machine_id or 'machine:'+machine_id in a['resources']) for a in result.get('actual',[]))
         relevant=actual_visible or (own or bool(stages)) and (any(overlaps(s) for s in spans) or uncertain and horizon_overlaps)
-        if not relevant and not (job['run_id'] in changed and own):continue
+        # Keep the selected machine's planned rows visible even when their bars
+        # fall outside the time viewport. Actual-only completed rows stay filtered.
+        assigned_outside=bool(machine_id and own and spans)
+        if not relevant and not assigned_outside and not (job['run_id'] in changed and own):continue
         job['outside_view']=bool(spans) and not any(overlaps(span) for span in spans)
         if not read_only and job.get('first_forming_at'):
             job.setdefault('allocation_start',job.get('planned_start'));job['planned_start']=job['first_forming_at']
         row=live.get(job['run_id']);job['items']=members;job['policy']=policy_map.get(job['run_id'],{'run_id':job['run_id'],'stages':[],'line_order':[],'ready_at':None,'waiting':False})
         job['live_version']=row.version if row else job['run_version'];job['run_status']=row.status if row else service.runs.PLANNED
         planned_start=job.get('allocation_start') or next((span['start'] for span in [*job.get('setup_segments',[]),*job.get('forming_segments',[])]),None)
-        job['past_plan']=bool(row and planned_start and datetime.fromisoformat(str(planned_start))<datetime.now(ZONE).replace(second=0,microsecond=0))
+        job['past_plan']=bool(job['run_id'] in actual_runs and row and planned_start and datetime.fromisoformat(str(planned_start))<datetime.now(ZONE).replace(second=0,microsecond=0))
         job['can_move']=not read_only and job['run_status']!=service.runs.ENDED and not job['past_plan']
         job['official_code']=row.official_code if row else job.get('official_code')
         job['release_state']=row.release_state if row else job.get('release_state','legacy')
@@ -111,8 +114,11 @@ def project(db,result,canonical,version,start,end,machine_id='',customer_id='',q
     if len(machine_rows)>100:fail('Hơn 100 máy trong phạm vi; chọn mã máy để thu hẹp.')
     machine_ids={m['id'] for m in machine_rows}
     result['jobs']=jobs
-    result['lines']=[l for l in result.get('lines',[]) if l['order_line_id'] in visible_lines]
+    result['lines']=[{**l,'product_name':metadata.get(l['order_line_id'],{}).get('product_name') or l.get('product_name'),'customer_name':metadata.get(l['order_line_id'],{}).get('customer_name') or l.get('customer_name')} for l in result.get('lines',[]) if l['order_line_id'] in visible_lines]
     order_ids={l['order_id'] for l in result['lines']};result['orders']=[o for o in result.get('orders',[]) if o['order_id'] in order_ids]
+    for order in result['orders']:
+        info=next((m for m in metadata.values() if m.get('order_id')==order['order_id']),{})
+        order['order_label']=' · '.join(str(value) for value in [info.get('customer_name'),info.get('po_number'),order['order_id']] if value)
     result['actual']=[a for a in result.get('actual',[]) if overlaps(a) and any('machine:'+m in a['resources'] for m in machine_ids)
         and (not customer_id and not q or any('line:'+ct in a['resources'] or ct in a.get('order_line_ids',[]) for ct in visible_lines))]
     result['stops']=[s for s in result.get('stops',[]) if s['machine_id'] in machine_ids and s['run_id'] in {j['run_id'] for j in jobs}]

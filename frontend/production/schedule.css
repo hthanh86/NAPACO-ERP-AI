@@ -29,3 +29,7 @@
 #editor .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:12px}#editor .run-material-fields{padding:12px 0;border-top:1px solid #dbe3ed}#saveRunStandard{background:#15803d;color:white;border:1px solid #166534;font-weight:700}.product-mold-hints{flex-basis:100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:5px}.product-mold-hints button{font-size:12px}.product-mold-hints .selected-mold{background:#dbeafe;border:1px solid #2563eb;color:#1d4ed8}#editor .item-row{padding:12px;background:#f7faff;border-radius:7px;margin:8px 0}
 
 .new-mold-fields{display:block;border-left:3px solid #2563eb;background:#f4f8ff;padding:12px;border-radius:6px}.new-mold-fields>.fields{margin-top:10px}.new-mold-fields>strong{color:#1e40af}#confirmText{white-space:pre-line}
+
+.standard-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.standard-cards>button{display:block;min-height:85px;padding:14px;text-align:left;border:1px solid #bfdbfe;border-radius:10px;white-space:normal;background:#f8fbff}.milestone-help{margin:10px 0;color:#475569;font-size:13px}
+
+.waiting-search{flex-basis:100%;width:100%}.waiting-search input{width:100%;min-width:0}
