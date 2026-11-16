@@ -101,17 +101,21 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
     for name in ['seconds_per_cycle','pull_mm','setup_minutes','waste_percent']:
         value=getattr(data,name)
         if value is not None:params[name]=value
-    spec=standard.snapshot['material'];mold=standard.snapshot['mold']
+    spec=dict(standard.snapshot['material']);mold=standard.snapshot['mold']
+    if data.planning_material:
+        spec.update(data.planning_material.model_dump())
+        params['density']=data.planning_material.density;params['resin']=data.planning_material.resin
+    if data.mold_geometry_confirmed is not None:params['mold_geometry_confirmed']=data.mold_geometry_confirmed
     params['film_width_mm']=data.film_width_mm or params.get('film_width_mm') or float(spec['width'])
-    if abs(float(params['film_width_mm'])-float(spec['width']))>0.0001:fail('Khổ màng của lần chạy phải khớp khổ NVL đã chọn trong định mức.')
-    if machine.max_width_mm and D(spec['width'])>machine.max_width_mm:fail('Khổ màng vượt máy.')
+    if data.planning_material and abs(float(params['film_width_mm'])-float(spec['width']))>0.0001:fail('Khổ màng phải khớp thông số vật liệu dự kiến của lần chạy.')
+    if machine.max_width_mm and D(params['film_width_mm'])>machine.max_width_mm:fail('Khổ màng vượt máy.')
     if machine.max_pull_mm and D(params['pull_mm'])>machine.max_pull_mm:fail('Bước kéo vượt máy.')
     for tool in standard.snapshot.get('molds') or [mold]:
         if D(tool.get('Dai_Khuon') or 0)>D(params['pull_mm']) or D(tool.get('Rong_Khuon') or 0)>D(params['film_width_mm']):
-            if not params.get('mold_geometry_confirmed'):fail('Khổ/kéo màng nhỏ hơn khuôn. Cần xác nhận và lưu định mức mới qua màn hình tạo lần chạy.')
+            if not params.get('mold_geometry_confirmed'):fail('Khổ/kéo màng nhỏ hơn khuôn. Cần xác nhận thông số riêng của lần chạy.')
     geometry_changed=(D(params['pull_mm'])!=D(standard.parameters['pull_mm']) or
         D(params['film_width_mm'])!=D(standard.parameters.get('film_width_mm') or spec['width']))
-    params['sheet_weight_kg']=(data.sheet_weight_kg if data.sheet_weight_kg is not None and not geometry_changed else
+    params['sheet_weight_kg']=(data.sheet_weight_kg if data.sheet_weight_kg is not None and not geometry_changed and data.planning_material is None else
         calculate_sheet_weight(params['pull_mm'],params['film_width_mm'],spec['thickness'],params['density']))
     source_items={i.product_id:i for i in db.scalars(select(StandardItem).where(StandardItem.standard_id==standard.id))}
     ids=sorted(i.order_line_id for i in data.items)
@@ -179,7 +183,7 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
         balances=material.ensure_available(db,requested,own_allocation_ids=pending_allocations,order_line_ids=ids,lock=not preview)
         if any(b['material_id']!=standard.material_id for b in balances.values()):fail('Nguồn nhựa không khớp định mức.')
     snapshot={'standard_id':standard.id,'standard_code':standard.code,'standard_revision':standard.revision,
-        'standard_snapshot':standard.snapshot,'parameters':params,'machine_id':machine.id,
+        'standard_snapshot':standard.snapshot,'planning_material':data.planning_material.model_dump() if data.planning_material else None,'parameters':params,'machine_id':machine.id,
         'machine_kind':machine.kind,'note':data.note,'group_confirmed':data.group_confirmed,
         'required_kg':str(needed),'planned_cycles':str(cycles)}
     if data.history_selection:

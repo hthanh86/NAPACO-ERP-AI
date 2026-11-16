@@ -66,9 +66,29 @@ def validate_issue(db,a,run,kg,exclude=None):
     material.ensure_available(db,{a.receipt_id:kg},own_allocation_ids=[a.id],order_line_id=a.order_line_id)
 
 
+def bind_issue_source(db,user,a,run,kg):
+    """Reserve the explicitly selected actual source inside the handover transaction."""
+    binding=db.get(RunMaterial,(run.id,a.id))
+    issued=binding.issued_kg if binding else Decimal(0)
+    outstanding=max(binding.planned_kg-issued if binding else Decimal(0),reserved(db,a.id,run.id)+kg)
+    other=db.scalar(select(func.coalesce(func.sum(RunMaterial.planned_kg-RunMaterial.issued_kg),0))
+        .join(Run,Run.id==RunMaterial.run_id).where(RunMaterial.allocation_id==a.id,
+            RunMaterial.run_id!=run.id,Run.status.in_(['Chưa chạy','Đang chạy'])))
+    if outstanding+other>a.held_kg:
+        material.fail('Phần giữ đã bố trí cho LSX khác hoặc không đủ để lập phiếu cấp.',409)
+    if binding and binding.planned_kg-issued>=outstanding:return
+    if not binding:
+        binding=RunMaterial(run_id=run.id,allocation_id=a.id,issued_kg=0);db.add(binding)
+    binding.planned_kg=issued+outstanding;run.version+=1
+    material.audit(db,user,'PRODUCTION_ACTUAL_MATERIAL_BIND',run.id,{'allocation_id':a.id,
+        'receipt_id':a.receipt_id,'planned_kg':str(binding.planned_kg),'basis':'issue_document'})
+    db.flush()
+
+
 def create_issue(db,user,allocation_id,data):
     a=material.allocation_lock(db,allocation_id,data.version)
     run=active_run(db,data.production_order_id,a.order_line_id)
+    bind_issue_source(db,user,a,run,data.kg)
     validate_issue(db,a,run,data.kg)
     row=H(id=str(uuid4()),run_id=run.id,allocation_id=a.id,mode='issue',quantity=data.kg,state='draft',version=1,
         created_by=user.id,created_at=now(),snapshot=encoded({'official_code':run.official_code,'receipt_id':a.receipt_id,

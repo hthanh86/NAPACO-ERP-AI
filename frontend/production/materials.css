@@ -1,0 +1,19 @@
+#detail{box-sizing:border-box;width:min(1040px,calc(100vw - 32px));overflow-x:hidden}
+#sourceSearch.source-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px;align-items:end;width:100%;min-width:0}
+#sourceSearch label{display:flex;flex-direction:column;margin:0;min-width:0}
+#sourceSearch input,#sourceSearch select{box-sizing:border-box;width:100%;min-width:0;max-width:100%}
+#sourceSearch .source-range span{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:6px;align-items:center}
+#sourceSearch .source-query{grid-column:3;grid-row:2}
+#sourceSearch .source-query span{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center}
+#sourceSearch .source-query button{margin:0;white-space:nowrap}
+#detail .scroll{max-width:100%;min-width:0;overflow:auto}
+#detail table{width:100%;min-width:0;table-layout:fixed}
+#detail th:first-child,#detail td:first-child{width:40%;overflow-wrap:anywhere;white-space:normal}
+#detail th,#detail td{white-space:normal;overflow-wrap:anywhere}
+#detail #sources button{white-space:normal}
+.issue-order-cards{display:flex;flex-wrap:wrap;gap:8px}
+.issue-order-cards label{display:flex;align-items:center;gap:8px;min-width:190px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;cursor:pointer}
+.issue-order-cards label:has(input:checked){border-color:#2563eb;background:#eff6ff}
+.issue-order-cards input[type=radio]{width:auto;margin:0}
+.issue-order-cards strong,.issue-order-cards small{display:block}
+@media(max-width:650px){#sourceSearch.source-filters{grid-template-columns:repeat(2,minmax(0,1fr))}#sourceSearch .source-query{grid-column:1/-1;grid-row:auto}#detail table{table-layout:auto}}

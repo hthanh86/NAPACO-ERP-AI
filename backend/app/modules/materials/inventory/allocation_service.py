@@ -17,6 +17,7 @@ from app.modules.materials.inventory.models import FilmMovement
 from app.modules.materials.inventory.stock import stock_expression
 from app.modules.materials.inventory.allocation_models import MaterialAllocation as Allocation, AllocationMovement as Link
 from app.modules.materials.receiving.models import FilmReceipt
+from app.modules.materials.models import FilmMaterial
 from app.modules.materials.purchasing.models import FilmLine
 from app.modules.orders.models import OrderLine
 from app.modules.production.models import ProductionOrder, FormingLog
@@ -112,17 +113,36 @@ def target(db,order_line_id,standard_id,receipt_id,*,new=True):
         if decimal(line.quantity)<=decimal(line.produced):fail('CTĐH không còn số lượng phải sản xuất.')
     source=db.execute(select(FilmReceipt,FilmLine.material_id).outerjoin(FilmLine,FilmLine.id==FilmReceipt.line_id)
         .where(FilmReceipt.id==receipt_id)).first()
-    if not source or source.material_id!=standard.material_id:fail('Vật liệu nguồn nhập không khớp định mức.')
+    if not source or not source.material_id or not db.get(FilmMaterial,source.material_id):fail('Nguồn nhập không có thông tin NVL hợp lệ.')
     return line,standard,item
 
 
+def reservation_standard(db,order_line_id,standard_id=None):
+    """Resolve the existing schema reference; it never chooses an LSX to issue to."""
+    if standard_id:return standard_id
+    line=db.get(OrderLine,order_line_id)
+    if not line:fail('Không tìm thấy CTĐH.',404)
+    from app.modules.production.run_models import ProductionOrderItem
+    linked=db.scalar(select(Standard.id).join(ProductionOrder,ProductionOrder.standard_id==Standard.id).join(
+        ProductionOrderItem,ProductionOrderItem.run_id==ProductionOrder.id).where(
+        ProductionOrderItem.order_line_id==order_line_id,ProductionOrderItem.enabled.is_(True),
+        ProductionOrder.status.in_(['Chưa chạy','Đang chạy']),Standard.active.is_(True)).order_by(Standard.id).limit(1))
+    if linked:return linked
+    candidate=db.scalar(select(Standard.id).join(StandardItem,StandardItem.standard_id==Standard.id).where(
+        StandardItem.product_id==line.product_id,Standard.active.is_(True)).order_by(Standard.code,Standard.revision.desc()).limit(1))
+    if not candidate:fail('CTĐH chưa có cấu hình sản xuất để liên kết phần giữ; lập kế hoạch cho sản phẩm trước.')
+    return candidate
+
+
 def reserve(db,user,data):
-    target(db,data.order_line_id,data.standard_id,data.receipt_id)
+    standard_id=reservation_standard(db,data.order_line_id,data.standard_id)
+    target(db,data.order_line_id,standard_id,data.receipt_id)
     ensure_available(db,{data.receipt_id:data.kg})
     a=Allocation(id=str(uuid4()),receipt_id=data.receipt_id,order_line_id=data.order_line_id,
-                 standard_id=data.standard_id,held_kg=data.kg,version=1,note=data.note,created_by=user.id)
+                 standard_id=standard_id,held_kg=data.kg,version=1,note=data.note,created_by=user.id)
     db.add(a);db.flush()
-    audit(db,user,'MATERIAL_RESERVE',a.id,allocation_record(a))
+    source_material_id=db.scalar(select(FilmLine.material_id).join(FilmReceipt,FilmReceipt.line_id==FilmLine.id).where(FilmReceipt.id==a.receipt_id))
+    audit(db,user,'MATERIAL_RESERVE',a.id,{**allocation_record(a),'source_material_id':source_material_id})
     return allocation_record(a)
 
 
@@ -376,10 +396,13 @@ def reconcile_legacy(db,touched):
     for identifier,b in balances.items():
         if b['stock_kg']<b['held_kg']:fail(identifier+': thay đổi làm tồn nhỏ hơn lượng đang giữ.',409)
     traced=select(Link.movement_id).where(Link.allocation_id==Allocation.id).exists()
-    affected=db.execute(select(Allocation,Standard.material_id).join(Standard,Standard.id==Allocation.standard_id)
+    affected=db.execute(select(Allocation,Standard.material_id,Audit.details).join(Standard,Standard.id==Allocation.standard_id)
+        .outerjoin(Audit,(Audit.entity_id==Allocation.id)&(Audit.action=='MATERIAL_RESERVE'))
         .where(Allocation.receipt_id.in_(receipts),or_(Allocation.held_kg>0,traced))).all()
-    if any(balances[a.receipt_id]['material_id']!=material_id for a,material_id in affected):
-        fail('Không đổi vật liệu nguồn đang được giữ cho CTĐH.',409)
+    # New reservations pin the actual source material. Old reservations were
+    # required to match the standard, so retain that original fallback.
+    if any(balances[a.receipt_id]['material_id']!=((details or {}).get('source_material_id') or material_id) for a,material_id,details in affected):
+        fail('Không đổi vật liệu của nguồn nhập đang được giữ hoặc đã cấp.',409)
     changed=[identifier for t in touched if t['table']=='FILM_MOVEMENTS' for identifier in t['ids']]
     from app.modules.materials.inventory.handover_models import MaterialHandover
     handovers={h.movement_id:h for h in db.scalars(select(MaterialHandover).where(MaterialHandover.movement_id.in_(changed)))}

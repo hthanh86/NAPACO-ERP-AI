@@ -20,9 +20,20 @@ class RunMaterialInput(Input):
     kg:Annotated[Decimal,Field(gt=0,max_digits=24,decimal_places=8,allow_inf_nan=False)]
 
 
+class PlanningMaterialInput(Input):
+    resin:str=Field(min_length=1,max_length=100)
+    density:Positive
+    thickness:Positive
+    width:Positive
+    color:str=Field('',max_length=500)
+    grade:str=Field('',max_length=500)
+
+
 class RunInput(Input):
     id:Key=Field(default_factory=lambda:str(uuid4()))
     standard_id:Key
+    planning_material:PlanningMaterialInput|None=None
+    mold_geometry_confirmed:bool|None=None
     machine_id:Key
     group_id:str=Field('',max_length=100)
     group_confirmed:bool=False

@@ -70,26 +70,49 @@ def listing(q: str=Query('',max_length=200),customer_id: str=Query('',max_length
                        standard_id=standard_id,line_id=line_id,page=page,size=size,unscheduled_now=unscheduled_now)
 
 
+@router.get(PREFIX+'/source-options')
+def source_options(user=Depends(access),db=Depends(get_db)):
+    from app.modules.production.planning_service import material_options
+    options=material_options(db)
+    return {key:options[key] for key in ['resins','grades','colors']}
+
+
 @router.get(PREFIX+'/sources')
-def sources(order_line_id: str,standard_id: str,q: str=Query('',max_length=200),
-            page: int=Query(1,ge=1),size: int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
+def sources(order_line_id:str,standard_id:str='',q:str=Query('',max_length=200),
+            resin:str=Query('',max_length=100),grade:str=Query('',max_length=500),color:str=Query('',max_length=500),
+            thickness_min:float|None=Query(None,gt=0),thickness_max:float|None=Query(None,gt=0),
+            width_min:float|None=Query(None,gt=0),width_max:float|None=Query(None,gt=0),
+            page:int=Query(1,ge=1),size:int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
     ready(db)
-    standard=db.get(Standard,standard_id)
-    if not standard:service.fail('Không tìm thấy định mức.',404)
     from app.modules.orders.models import OrderLine
+    from app.modules.products.models import Product
+    from app.modules.materials.models import FilmMaterial
     from app.modules.production.planning_models import ProductionStandardItem
-    line=db.get(OrderLine,order_line_id)
-    if not line or not db.get(ProductionStandardItem,(standard_id,line.product_id)):
-        service.fail('Định mức không phù hợp CTĐH.')
+    if not db.get(OrderLine,order_line_id):service.fail('Không tìm thấy CTĐH.',404)
+    if standard_id:
+        standard=db.get(Standard,standard_id);line=db.get(OrderLine,order_line_id)
+        if not standard or not db.get(ProductionStandardItem,(standard_id,line.product_id)):service.fail('Định mức không phù hợp CTĐH.')
+    for lo,hi,label in [(thickness_min,thickness_max,'độ dày'),(width_min,width_max,'khổ màng')]:
+        if lo is not None and hi is not None and lo>hi:service.fail('Khoảng '+label+' phải tăng dần.')
+    product_names=select(func.group_concat(func.distinct(Product.name))).select_from(OrderLine).join(
+        Product,Product.id==OrderLine.product_id).where(OrderLine.film_line_id==FilmReceipt.line_id).correlate(FilmReceipt).scalar_subquery()
     query=select(FilmReceipt.id,FilmReceipt.line_id,FilmReceipt.receipt_date,FilmReceipt.status,
         FilmReceipt.quantity.label('received_kg'),service.stock_expression().label('stock_kg'),
-        service.held_expression().label('held_kg'),
-        (service.stock_expression()-service.held_expression()).label('available_kg')).join(FilmLine,FilmLine.id==FilmReceipt.line_id)
-    query=query.where(FilmLine.material_id==standard.material_id,FilmReceipt.status=='OK')
-    if q:query=query.where(or_(FilmReceipt.id.contains(q,autoescape=True),FilmReceipt.line_id.contains(q,autoescape=True)))
+        service.held_expression().label('held_kg'),(service.stock_expression()-service.held_expression()).label('available_kg'),
+        product_names.label('product_names'),FilmLine.resin,FilmMaterial.grade,FilmMaterial.color,
+        FilmMaterial.thickness,FilmMaterial.width,FilmMaterial.esd).join(FilmLine,FilmLine.id==FilmReceipt.line_id).join(
+        FilmMaterial,FilmMaterial.id==FilmLine.material_id).where(FilmReceipt.status=='OK')
+    for column,value in [(FilmLine.resin,resin),(FilmMaterial.grade,grade),(FilmMaterial.color,color)]:
+        if value:query=query.where(func.lower(func.trim(column))==value.strip().lower())
+    for column,lo,hi in [(FilmMaterial.thickness,thickness_min,thickness_max),(FilmMaterial.width,width_min,width_max)]:
+        if lo is not None:query=query.where(column>=lo)
+        if hi is not None:query=query.where(column<=hi)
+    if q:query=query.where(or_(FilmReceipt.id.contains(q,autoescape=True),FilmReceipt.line_id.contains(q,autoescape=True),
+        FilmLine.resin.contains(q,autoescape=True),FilmMaterial.grade.contains(q,autoescape=True),
+        FilmMaterial.color.contains(q,autoescape=True),product_names.contains(q,autoescape=True)))
     total=db.scalar(select(func.count()).select_from(query.subquery()))
     return {'items':[dict(r) for r in db.execute(query.order_by(FilmReceipt.receipt_date,FilmReceipt.id)
-            .offset((page-1)*size).limit(size)).mappings()],'total':total,'page':page,'size':size}
+        .offset((page-1)*size).limit(size)).mappings()],'total':total,'page':page,'size':size}
 
 
 @router.get(PREFIX+'/allocations')

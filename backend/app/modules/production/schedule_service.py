@@ -51,6 +51,7 @@ def dto(run,items,bindings):
 def moved_config(run,move):
     p=run['snapshot']['parameters']
     return RunInput.model_validate({'id':run['id'],'version':move.version,'standard_id':run['standard_id'],
+        'planning_material':run['snapshot'].get('planning_material'),'mold_geometry_confirmed':p.get('mold_geometry_confirmed'),
         'machine_id':move.machine_id,'group_id':run['group_id'],'group_confirmed':run['snapshot']['group_confirmed'],
         'parent_run_id':run['parent_run_id'],'film_width_mm':p.get('film_width_mm'),'items':[{'order_line_id':i['order_line_id'],'quantity':i['planned_qty'],'cavity':i['cavity']} for i in run['items']],
         'materials':[{'allocation_id':m['allocation_id'],'kg':m['planned_kg']} for m in run['materials']],

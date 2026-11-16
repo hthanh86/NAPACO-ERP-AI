@@ -12,7 +12,7 @@ class Input(BaseModel):
 class ReserveInput(Input):
     receipt_id: Key
     order_line_id: Key
-    standard_id: Key
+    standard_id: Key | None = None
     kg: Kg
     note: str = Field('',max_length=1000)
 
