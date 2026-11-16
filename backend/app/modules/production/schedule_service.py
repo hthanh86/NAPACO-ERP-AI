@@ -52,14 +52,28 @@ def moved_config(run,move):
     p=run['snapshot']['parameters']
     return RunInput.model_validate({'id':run['id'],'version':move.version,'standard_id':run['standard_id'],
         'machine_id':move.machine_id,'group_id':run['group_id'],'group_confirmed':run['snapshot']['group_confirmed'],
-        'parent_run_id':run['parent_run_id'],'items':[{'order_line_id':i['order_line_id'],'quantity':i['planned_qty'],'cavity':i['cavity']} for i in run['items']],
+        'parent_run_id':run['parent_run_id'],'film_width_mm':p.get('film_width_mm'),'items':[{'order_line_id':i['order_line_id'],'quantity':i['planned_qty'],'cavity':i['cavity']} for i in run['items']],
         'materials':[{'allocation_id':m['allocation_id'],'kg':m['planned_kg']} for m in run['materials']],
         **{k:p[k] for k in ['seconds_per_cycle','pull_mm','setup_minutes','sheet_weight_kg','waste_percent']},'note':move.note})
 
 
-def prepare(db,user,data,*,for_update=False):
+def prepare(db,user,data,*,for_update=False,reason_view=None):
     """Preview uses SELECT only. Save invokes this under the shared ERP write lock."""
     base=latest(db);version=base.version if base else 0
+    planning_now=datetime.now(ZONE).replace(second=0,microsecond=0)
+    old_jobs={j['run_id']:j for j in (base.result.get('jobs',[]) if base else [])}
+    past=set()
+    for identifier,job in old_jobs.items():
+        start=job.get('allocation_start') or next((span['start'] for span in [*job.get('setup_segments',[]),*job.get('forming_segments',[])]),None)
+        if start and datetime.fromisoformat(str(start))<planning_now:past.add(identifier)
+    previous_policies={p['run_id']:JobPolicy.model_validate(p).model_dump(mode='json') for p in (base.request.get('jobs',[]) if base else [])}
+    changed_policies={p.run_id for p in data.jobs if p.model_dump(mode='json')!=previous_policies.get(p.run_id)}
+    edits={c.config.id for c in data.changes}|{m.run_id for m in data.moves}|set(data.unschedule)|changed_policies
+    if edits&past:material.fail('Không được thay đổi kế hoạch đã bắt đầu trong quá khứ. Chỉ xem lại lịch đã lưu.',409)
+    for policy in data.jobs:
+        if policy.run_id in edits and policy.ready_at and policy.ready_at<planning_now:
+            material.fail('Không được chọn thời gian bắt đầu trong quá khứ.',422)
+
     if data.base_version!=version:material.fail('Kế hoạch đã thay đổi; tính thử lại với phiên bản mới.',409)
     from app.modules.production import schedule_daily
     day_state=schedule_daily.check_request(db,data,for_update) if inspect(db.connection()).has_table('production_schedule_days') else None
@@ -163,6 +177,13 @@ def prepare(db,user,data,*,for_update=False):
         if virtual[identifier]['status']==runs.RUNNING:material.fail('Lần chạy đang chạy phải chốt/kết thúc hoặc giải phóng máy; không gỡ thực tế.')
         policies.pop(identifier,None)
     queue=[i for i in dict.fromkeys([*data.order,*((base.request.get('order',[])) if base else []),*policies]) if i not in data.unschedule]
+    if base and past:
+        old_order=base.request.get('order',[])
+        for identifier in past & set(queue):
+            machine=virtual[identifier]['machine_id']
+            before_old=[i for i in old_order[:old_order.index(identifier)] if i in original and original[i]['machine_id']==machine] if identifier in old_order else []
+            before_new=[i for i in queue[:queue.index(identifier)] if i in virtual and virtual[i]['machine_id']==machine]
+            if before_old!=before_new:material.fail('Không được đảo vị trí hoặc chèn lần chạy làm thay đổi kế hoạch trong quá khứ.',409)
     if len(queue)>200:material.fail('Một bản lịch tối đa 200 lần chạy.')
     # Active runs cannot disappear from the authoritative schedule when recalculating.
     for r in virtual.values():
@@ -173,7 +194,9 @@ def prepare(db,user,data,*,for_update=False):
         'duration_seconds':s.duration_seconds,'hold_machine':s.hold_machine,'enabled':s.enabled,'note':s.note}
         for s in read(select(RunStop).order_by(RunStop.id))}
     logs=db.scalars(select(FormingLog).where(FormingLog.production_order_id.in_(ids)).order_by(FormingLog.shift_end,FormingLog.id)).all()
-    log_by_id={l.id:l for l in logs};last_end={}
+    log_by_id={l.id:l for l in logs};last_end={};actual_cycles=defaultdict(int)
+    for log in logs:
+        if log.shift_snapshot:actual_cycles[log.production_order_id]+=integer(log.good+log.ng,log.id)
     for log in logs:
         if log.shift_end:last_end[log.production_order_id]=max(last_end.get(log.production_order_id,log.shift_end),log.shift_end)
     for patch in data.stops:
@@ -297,13 +320,23 @@ def prepare(db,user,data,*,for_update=False):
     context_runs=[];stock_fingerprints=[balances,[material.allocation_record(a) for a in all_allocations.values()]]
     for identifier in queue:
         r=virtual[identifier];r={**r,'policy':policies.get(identifier,JobPolicy(run_id=identifier).model_dump()),
+            'future_only':identifier not in original or identifier in edits,
             'has_actual':identifier in last_end,'actual_end':aware(last_end.get(identifier)),
             'streams':streams[identifier],'processed':processed[identifier]}
+        if r['snapshot'].get('parameters',{}).get('planned_cycles_limit') is not None:
+            r={**r,'snapshot':{**r['snapshot'],'parameters':{**r['snapshot']['parameters'],'completed_cycles':actual_cycles[identifier]}}}
+        # Do not invalidate old saved starts solely because this reason field is new.
+        previous_policy=old_policies.get(identifier,{})
+        previous_start=previous_policy.get('ready_at')
+        if isinstance(previous_start,str):previous_start=datetime.fromisoformat(previous_start)
+        r['validate_start_reason']=(r['policy'].get('start_basis','setup')!=previous_policy.get('start_basis','setup') or r['policy'].get('ready_at')!=previous_start or
+            r['policy'].get('start_reason','')!=previous_policy.get('start_reason',''))
         if r['status']==runs.ENDED:
             # Ended runs retain actual downstream WIP but cannot claim future forming output.
             r={**r,'items':[{**i,'planned_qty':i['completed_qty']} for i in r['items']]}
         if not r['items']:material.fail('Lần chạy thiếu chi tiết sản phẩm: '+identifier)
-        try:needed=requirements(r['items'],r['snapshot'].get('parameters'),identifier)['required_kg']
+        try:
+            requirement=requirements(r['items'],r['snapshot'].get('parameters'),identifier);needed=requirement['required_kg']
         except ScheduleError as error:
             from fastapi import HTTPException
             raise HTTPException(422,detail=error.detail) from error
@@ -323,22 +356,34 @@ def prepare(db,user,data,*,for_update=False):
             warnings.append({'code':'MACHINE_STOCK_AS_OF:'+identifier,'message':'Số dư tại máy là số chốt ca gần nhất cộng cấp/trả chưa chốt; phải đối chiếu trước khi chạy tiếp.','run_id':identifier})
         pending=sum((D(l['pending_handover_kg']) for l in material_contexts[identifier]['lots']),Decimal(0))
         if pending>0:warnings.append({'code':'PENDING_HANDOVER:'+identifier,'message':'Có NVL chờ ký nhận; chỉ là nguồn kế hoạch, chưa được dùng để ghi sản xuất.','run_id':identifier})
-        if needed>held+measured+pending:material.fail(identifier+': thiếu nhựa cho phần được bố trí; bổ sung phân bổ trước khi lưu.',409)
+        shortage=max(Decimal(0),needed-held-measured-pending)
+        if shortage:
+            warnings.append({'code':'MATERIAL_SHORTAGE:'+identifier,'run_id':identifier,'requires_confirmation':False,
+                'message':f'Thiếu {shortage} kg NVL cho kế hoạch. Vẫn được xếp lịch; phải bổ sung nguồn, cấp và ký nhận trước khi chạy thực tế.'})
         r['material']={'required_kg':str(needed),'held_unissued_kg':str(held),'machine_accounted_kg':str(measured),
-            'pending_handover_kg':str(pending),'machine_balance_as_of':aware(position['previous_end']),
+            'pending_handover_kg':str(pending),'shortage_kg':str(shortage),'machine_balance_as_of':aware(position['previous_end']),
             'machine_balance_certainty':'last_closed_shift_plus_signed_receipts'}
+        per_sheet=requirement['weight']*(1+requirement['waste']/100)
+        capacity_known=bool(r['materials'] or material_contexts[identifier]['lots'] or position['sources'])
+        r['material']['max_plannable_sheets']=int((held+measured+pending)//per_sheet) if capacity_known else None
+        r['material']['capacity_basis']='bound_unissued_plus_signed_balance_plus_pending_handover'
         r['material']['sources']=[{**s,'accounted_kg':str(kg)} for s,kg in zip(position['sources'],source_kg)]
         stock_fingerprints.append([identifier,position,material_contexts[identifier]['lots']]);context_runs.append(r)
     stop_context=[]
     for s in stops.values():
         r=virtual.get(s['run_id'])
         if r:stop_context.append({**s,'run_ended':r['status']==runs.ENDED,'machine_id':r['machine_id'],'line_ids':[i['order_line_id'] for i in r['items']]})
-    context={'start':data.start,'end':data.end,'windows':spans,'actual':actual,'stops':stop_context,'warnings':warnings,
+    labels=db.execute(select(OrderLine.id,OrderLine.product_id,OrderLine.order_id,OrderLine.unit,OrderLine.delivery_date,
+        Order.po_number,Order.customer_id,Customer.name.label('customer_name'),Product.name.label('product_name'))
+        .join(Order,Order.id==OrderLine.order_id).outerjoin(Customer,Customer.id==Order.customer_id)
+        .outerjoin(Product,Product.id==OrderLine.product_id).where(OrderLine.id.in_([l.id for l in line_rows]))).mappings().all()
+    context={'planning_now':planning_now,'reason_view':reason_view,'changed_runs':{c.id for c in configs},'line_labels':{r['id']:dict(r) for r in labels},'start':data.start,'end':data.end,'windows':spans,'actual':actual,'stops':stop_context,'warnings':warnings,
         'runs':context_runs,'lines':[{'id':l.id,'order_id':l.order_id,'unit':l.unit,'quantity':integer(l.quantity,l.id),
         'actual_finished_qty':sum(e['quantity'] for e in final_actual[l.id]),
         'actual_finished_at':max((e['at'] for e in final_actual[l.id]),default=None)} for l in line_rows]}
     # tuple keys in runtime streams are not JSON keys; fingerprint their ordered pairs explicitly.
-    fingerprint={'request':data.model_dump(mode='json',exclude={'preview_hash','confirmations'}),'base':version,
+    fingerprint={'request':data.model_dump(mode='json',exclude={'preview_hash','confirmations'}),'base':version,'reason_view':reason_view,
+        'planning_floor':planning_now if any(r.get('future_only') and not r['policy'].get('ready_at') for r in context_runs) else None,
         'runs':list(virtual.values()),'windows':windows,'default':read_default(db),'stops':list(stops.values()),
         'actual':actual,'logs':fingerprints,'stock':stock_fingerprints,
         'lines':[[l.id,l.quantity,l.produced,l.unit] for l in line_rows],
@@ -349,10 +394,7 @@ def prepare(db,user,data,*,for_update=False):
         from fastapi import HTTPException
         raise HTTPException(422,detail=error.detail) from error
     canonical={'start':data.start,'end':data.end,'order':queue,'jobs':[policies.get(i,JobPolicy(run_id=i).model_dump()) for i in queue]}
-    labels=db.execute(select(OrderLine.id,OrderLine.product_id,OrderLine.order_id,OrderLine.unit,OrderLine.delivery_date,
-        Order.po_number,Order.customer_id,Customer.name.label('customer_name'),Product.name.label('product_name'))
-        .join(Order,Order.id==OrderLine.order_id).outerjoin(Customer,Customer.id==Order.customer_id)
-        .outerjoin(Product,Product.id==OrderLine.product_id).where(OrderLine.id.in_([l.id for l in line_rows]))).mappings().all()
+
     snapshot_context={'schema_version':1,'runs':[virtual[i] for i in queue],
         'lines':{r['id']:dict(r) for r in labels},'default_calendar':read_default(db),
         'machines':[{'id':m.id,'name':m.name,'kind':m.kind,'status':m.status,'version':m.version,
@@ -372,10 +414,12 @@ def preview(db,user,data):
     return {k:v for k,v in outcome.items() if not k.startswith('_')}
 
 
-def save(db,user,data):
-    outcome=prepare(db,user,data,for_update=True)
-    if outcome['preview_hash']!=data.preview_hash:material.fail('Dữ liệu nguồn/lịch máy đã thay đổi; tính thử và xác nhận lại.',409)
-    missing={w['code'] for w in outcome['warnings']}-set(data.confirmations)
+def save(db,user,data,*,reason_view=None):
+    outcome=prepare(db,user,data,for_update=True,reason_view=reason_view)
+    if outcome['preview_hash']!=data.preview_hash:
+        from fastapi import HTTPException
+        raise HTTPException(409,detail={'code':'PREVIEW_STALE','message':'Thời gian hiện tại hoặc dữ liệu/lịch máy đã đổi; tính lại và xác nhận mốc mới trước khi lưu.'})
+    missing={w['code'] for w in outcome['warnings'] if w.get('requires_confirmation',True)}-set(data.confirmations)
     if missing:
         from fastapi import HTTPException
         raise HTTPException(409,detail={'code':'CONFIRMATION_REQUIRED','warnings':[w for w in outcome['warnings'] if w['code'] in missing]})
@@ -414,7 +458,7 @@ def save(db,user,data):
     # Same engine, now from committed-intent state; no duplicate action application.
     canonical=outcome['_canonical']
     clean=ScheduleInput.model_validate({'base_version':data.base_version,**encoded(canonical)})
-    fresh=prepare(db,user,clean,for_update=True)
+    fresh=prepare(db,user,clean,for_update=True,reason_view=reason_view)
     identifier=str(uuid4());version=data.base_version+1
     result=encoded(fresh['result'])
     plan=SchedulePlan(id=identifier,version=version,request=encoded(canonical),result=result,

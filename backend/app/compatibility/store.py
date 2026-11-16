@@ -90,6 +90,8 @@ def baseline(db):
         rows=result.setdefault(row.book,{}).setdefault(row.sheet,[])
         while len(rows)<row.row_number:rows.append([])
         rows[row.row_number-1]=copy.deepcopy(row.cells)
+    from app.modules.master.tool_catalog import append_to_projection
+    append_to_projection(db,result['master'])
     return result
 
 

@@ -54,6 +54,9 @@
         group('Nguyên Liệu', [['Tạo Đơn','/?view=film-create','+'],['Màng Đã Đặt','/?view=film','▤'],['Nhận Màng','/?view=film-receive','↓'],['Tồn Kho','/?view=film-stock','▥']]));
       sidebar.append(nav); document.body.prepend(sidebar, content);
     }
+    const railToggle=el('button','','erp-rail-toggle');railToggle.type='button';railToggle.setAttribute('aria-controls','erpSidebar');sidebar.append(railToggle);
+    const renderRail=()=>{const collapsed=document.body.classList.contains('erp-rail-collapsed');railToggle.textContent=collapsed?'❯':'❮';railToggle.title=collapsed?'Mở menu tổng':'Thu menu tổng';railToggle.setAttribute('aria-label',railToggle.title);railToggle.setAttribute('aria-expanded',String(!collapsed));};
+    try{document.body.classList.toggle('erp-rail-collapsed',localStorage.getItem('napaco:sidebar:collapsed')==='true');}catch{}renderRail();railToggle.onclick=()=>{document.body.classList.toggle('erp-rail-collapsed');renderRail();try{localStorage.setItem('napaco:sidebar:collapsed',String(document.body.classList.contains('erp-rail-collapsed')));}catch{}};
     const nav = document.getElementById('erpModuleMenu');
     const master = group('Dữ Liệu Master', [['Khách Hàng','/master/customers','♙'],['Sản Phẩm','/master/products','▧'],['Nhà Cung Cấp','/master/suppliers','▣']]);
     master.id = 'erpMasterMenu'; (nav || sidebar).prepend(master);
@@ -94,6 +97,7 @@
         catch(error) {logout.disabled = false; panel.append(el('span', error.message));}
       };
     } catch (error) {panel.textContent = error.message;}
+    const scroll=el('div','','erp-sidebar-scroll');for(const child of [...sidebar.children])if(child!==railToggle)scroll.append(child);sidebar.prepend(scroll);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

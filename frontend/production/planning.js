@@ -4,6 +4,7 @@
   const kinds = {automatic:'Định hình tự động',semi_automatic:'Định hình bán tự động',cutting:'Máy cắt',edge:'Máy ép biên',unclassified:'Chưa phân loại'};
   const statuses = {ready:'Sẵn sàng',running:'Đang chạy',maintenance:'Bảo dưỡng',fault:'Lỗi',inactive:'Ngừng sử dụng'};
   let page=1,total=0,items=[],machineEditing=null,standardEditing=null,standardItems=[],pickerKind='',pickerPage=1,pickerTotal=0,busy=false,request=0,pickerRequest=0;
+  let standardMolds=[],autoName=true;
   const selected = new Map();
   const sf=$('standardForm'), mf=$('machineForm');
   const field=(form,name)=>form.elements.namedItem(name);
@@ -26,7 +27,7 @@
     const result=await api(kind+'?'+new URLSearchParams({q:$('query').value,page,size:25,history:$('history').checked}));
     if(token!==request)return;
     items=result.items;total=result.total;
-    $('headers').replaceChildren(...(kind==='machines'?['Chọn lịch','Mã / tên','Loại','Trạng thái','Thao tác']:['Mã / tên','Phiên bản','Máy','Sử dụng','Thao tác']).map(t=>node('th',t)));
+    $('headers').replaceChildren(...(kind==='machines'?['Chọn lịch','Mã / tên','Loại','Trạng thái','Thao tác']:['Mã / tên','Phiên bản','Máy','Thông số','Thao tác']).map(t=>node('th',t)));
     $('rows').replaceChildren();
     for(const item of items){
       const row=node('tr');
@@ -34,12 +35,20 @@
         const cell=node('td'),check=node('input');check.type='checkbox';check.checked=selected.has(item.id);
         check.onchange=()=>{if(check.checked)selected.set(item.id,item.version);else selected.delete(item.id);summary();};cell.append(check);row.append(cell);
         [item.id+' · '+item.name,kinds[item.kind],statuses[item.status]].forEach(t=>row.append(node('td',t)));
-      }else [item.code+' · '+item.name,item.revision,item.machine_id,item.active?'Có':'Ngừng'].forEach(t=>row.append(node('td',t)));
+      }else [item.code+' · '+item.name,item.revision,item.machine_id,item.active?'Đã lưu':'Bản cũ ngừng dùng'].forEach(t=>row.append(node('td',t)));
       const action=node('td');action.append(button(kind==='machines'?'Sửa máy':'Xem / tạo phiên bản',()=>guard(()=>kind==='machines'?openMachine(item):openStandard(item.id))));row.append(action);$('rows').append(row);
     }
     $('count').textContent=`${total} bản ghi · Trang ${page}`;$('prev').disabled=page===1;$('next').disabled=page*25>=total;summary();
   }
   function openMachine(item=null){machineEditing=item;mf.reset();mf.querySelector('.error').textContent='';for(const name of ['id','name','kind','status','max_width_mm','max_pull_mm','notes'])field(mf,name).value=item?.[name]??(name==='kind'?'unclassified':name==='status'?'ready':'');field(mf,'id').readOnly=!!item;$('machineDialog').showModal();}
+
+  function suggestedName(){const n=k=>Number(field(sf,k).value)||0;return (standardMolds.length>1||standardItems.length>1?'Ghep_Khuon_':'')+(field(sf,'resin').value||'NVL')+'-'+n('film_width_mm')+'x'+n('pull_mm')+'-'+n('seconds_per_cycle')+'(chuky)';}
+  function suggestName(){if(autoName)field(sf,'name').value=suggestedName();}
+  function renderMolds(){const host=$('standardMolds');host.replaceChildren();field(sf,'mold_id').value=standardMolds[0]?.MaCC||'';for(const mold of standardMolds){const row=node('div',mold.MaCC+' · '+mold.Rong_Khuon+' × '+mold.Dai_Khuon+' mm');row.append(button('Bỏ khuôn',()=>{standardMolds=standardMolds.filter(m=>m!==mold);renderMolds();suggestGeometry();}));host.append(row);}}
+  function suggestGeometry(){if(standardMolds.length){const widths=standardMolds.map(m=>Number(m.Rong_Khuon)),lengths=standardMolds.map(m=>Number(m.Dai_Khuon));if(widths.every(v=>v>0)&&lengths.every(v=>v>0)){field(sf,'film_width_mm').value=widths.reduce((a,b)=>a+b,0)+40;field(sf,'pull_mm').value=Math.max(...lengths)+60;}}suggestName();}
+  function setDensityOptions(material){const select=$('densityPreset');select.replaceChildren(new Option('Chọn loại nhựa / tỷ trọng',''));const defaults=material?.density_defaults;for(const c of defaults?.choices||[])select.add(new Option(c.resin+' · '+c.density+' g/cm³',JSON.stringify(c)));if(defaults?.automatic){select.value=JSON.stringify(defaults.choices[0]);select.onchange();}else if(material){field(sf,'resin').value='';field(sf,'density').value='';suggestName();}}
+  $('densityPreset').onchange=()=>{if(!$('densityPreset').value)return;const c=JSON.parse($('densityPreset').value);field(sf,'resin').value=c.resin;field(sf,'density').value=c.density;suggestName();};
+  field(sf,'name').oninput=()=>autoName=false;$('suggestName').onclick=()=>{autoName=true;suggestName();};for(const key of ['film_width_mm','pull_mm','seconds_per_cycle'])field(sf,key).addEventListener('input',suggestName);
   function renderItems(){
     $('standardItems').replaceChildren();
     standardItems.forEach((item,index)=>{
@@ -49,17 +58,17 @@
     });
   }
   async function openStandard(id=null){
-    sf.reset();sf.querySelector('.error').textContent='';$('route').textContent='';$('weight').textContent='';standardEditing=id;standardItems=[];
+    sf.reset();standardMolds=[];autoName=!id;setDensityOptions(null);sf.querySelector('.error').textContent='';$('route').textContent='';$('weight').textContent='';standardEditing=id;standardItems=[];
     if(id){
       const data=await api('standards/'+id);
-      const values={...data,...data.parameters};for(const name of ['code','name','machine_id','material_id','mold_id','pull_mm','seconds_per_cycle','density','setup_minutes','waste_percent'])field(sf,name).value=values[name];field(sf,'active').checked=data.active;field(sf,'approved').checked=false;$('route').textContent=data.snapshot.approval?.approved?'Phiên bản gốc đã duyệt. Phiên bản mới cần xác nhận duyệt riêng.':'Phiên bản gốc chưa có xác nhận duyệt.';
+      const values={...data,...data.parameters};for(const name of ['code','name','machine_id','material_id','mold_id','pull_mm','seconds_per_cycle','density','setup_minutes','waste_percent'])field(sf,name).value=values[name];field(sf,'film_width_mm').value=data.parameters.film_width_mm||data.snapshot.material.width;field(sf,'resin').value=data.parameters.resin||'';standardMolds=data.snapshot.molds||[data.snapshot.mold];$('route').textContent='Bản đã lưu được giữ nguyên; chỉnh sửa và lưu sẽ tạo phiên bản mới.';
       standardItems=data.items.map(i=>({product_id:i.product_id,name:i.snapshot.name,cavity:i.cavity,edge:i.edge}));
       $('weight').textContent='Trọng lượng bìa đã chốt: '+data.parameters.sheet_weight_kg+' kg/bìa';
       const route=await api('standards/'+id+'/route');const names={forming:'Định hình',cutting:'Cắt',forming_cutting:'Định hình + Cắt liền',edge:'Ép biên'};
       $('route').textContent=route.items.map(i=>i.product_id+': '+i.stages.map(s=>names[s]).join(' → ')+' · '+i.cavity+' '+i.product_unit+'/bìa').join('\n');
-      $('standardHeading').textContent=data.code+' · phiên bản '+data.revision+' (lưu để tạo phiên bản tiếp theo)';
+      autoName=field(sf,'name').value===suggestedName();$('standardHeading').textContent=data.code+' · phiên bản '+data.revision+' (lưu để tạo phiên bản tiếp theo)';
     }else $('standardHeading').textContent='Bộ định mức mới';
-    field(sf,'code').readOnly=!!id;renderItems();$('standardDialog').showModal();
+    field(sf,'code').readOnly=true;renderMolds();renderItems();suggestName();$('standardDialog').showModal();
   }
   async function pickerSearch(){
     const token=++pickerRequest,kind=pickerKind;
@@ -72,8 +81,8 @@
       $('pickerResults').append(button(title.filter(Boolean).join(' · '),()=>{
         if(kind==='products'){
           if(standardItems.some(i=>i.product_id===item.id)){$('pickerMessage').textContent='Sản phẩm đã có trong cấu hình.';return;}
-          standardItems.push({product_id:item.id,name:item.name,cavity:1,edge:false});renderItems();
-        }else field(sf,{machines:'machine_id',materials:'material_id',molds:'mold_id'}[kind]).value=kind==='molds'?item.MaCC:item.id;
+          standardItems.push({product_id:item.id,name:item.name,cavity:1,edge:false});renderItems();suggestName();
+        }else if(kind==='molds'){if(!standardMolds.some(m=>m.MaCC===item.MaCC))standardMolds.push(item);renderMolds();suggestGeometry();}else{field(sf,{machines:'machine_id',materials:'material_id'}[kind]).value=item.id;if(kind==='materials')setDensityOptions(item);}
         $('picker').close();
       }));
     }
@@ -94,7 +103,7 @@
     if(selected.has(result.id))selected.set(result.id,result.version);summary();$('machineDialog').close();message('Đã lưu máy.');await search();
   },$('machineDialog'));};
   sf.onsubmit=e=>{e.preventDefault();guard(async()=>{
-    const payload=Object.fromEntries(new FormData(sf));for(const k of ['pull_mm','seconds_per_cycle','density','setup_minutes','waste_percent'])payload[k]=Number(payload[k]);payload.active=field(sf,'active').checked;payload.approved=field(sf,'approved').checked;
+    const payload=Object.fromEntries(new FormData(sf));for(const k of ['pull_mm','seconds_per_cycle','density','setup_minutes','waste_percent'])payload[k]=Number(payload[k]);payload.active=true;payload.approved=true;payload.film_width_mm=Number(field(sf,'film_width_mm').value);payload.extra_mold_ids=standardMolds.slice(1).map(m=>m.MaCC);
     payload.items=standardItems.map(({product_id,cavity,edge})=>({product_id,cavity,edge}));
     const result=await api('standards'+(standardEditing?'/'+standardEditing+'/revisions':''),{method:'POST',body:JSON.stringify(payload)});
     $('standardDialog').close();message(`Đã lưu ${result.code} phiên bản ${result.revision}; ${result.parameters.sheet_weight_kg} kg/bìa.`);await search();
@@ -119,4 +128,5 @@
   $('loadCalendar').after(inherit);
   const settings=document.createElement('a');settings.href='/production/calendar-settings';settings.textContent='Thiết lập giờ làm / nghỉ mặc định';$('loadCalendar').before(settings);
   const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Ho_Chi_Minh'}).format(new Date());$('start').value=today;$('end').value=today;$('exceptionDay').value=today;$('prev').disabled=true;$('next').disabled=true;
+  const linkedStandard=new URLSearchParams(location.search).get('standard_id');if(linkedStandard)guard(()=>openStandard(linkedStandard));
 })();

@@ -89,11 +89,10 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
     standard=db.get(Standard,data.standard_id)
     if not standard or not standard.active:fail('Chọn định mức đang áp dụng.')
     latest=db.scalar(select(func.max(Standard.revision)).where(Standard.code==standard.code))
-    if standard.revision!=latest and (not identifier or run.standard_id!=standard.id):
-        fail('Chọn phiên bản định mức mới nhất khi tạo/đổi cấu hình.')
+    # An explicitly selected saved version is valid; historical snapshots stay immutable.
     query=select(Machine).where(Machine.id==data.machine_id)
     machine=db.scalar(query if preview else query.with_for_update())
-    if not machine or machine.status not in {'ready','running'} or machine.kind!=standard.snapshot['machine']['kind']:
+    if not machine or machine.status not in {'ready','running'} or machine.kind not in {'automatic','semi_automatic'} or (standard.snapshot.get('machine') and machine.kind!=standard.snapshot['machine']['kind']):
         fail('Máy cần sử dụng được và cùng loại tuyến với cấu hình.')
     if data.parent_run_id:
         parent=run_lock(db,data.parent_run_id,readonly=preview)
@@ -103,11 +102,17 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
         value=getattr(data,name)
         if value is not None:params[name]=value
     spec=standard.snapshot['material'];mold=standard.snapshot['mold']
+    params['film_width_mm']=data.film_width_mm or params.get('film_width_mm') or float(spec['width'])
+    if abs(float(params['film_width_mm'])-float(spec['width']))>0.0001:fail('Khổ màng của lần chạy phải khớp khổ NVL đã chọn trong định mức.')
     if machine.max_width_mm and D(spec['width'])>machine.max_width_mm:fail('Khổ màng vượt máy.')
     if machine.max_pull_mm and D(params['pull_mm'])>machine.max_pull_mm:fail('Bước kéo vượt máy.')
-    if D(mold.get('Dai_Khuon') or 0)>D(params['pull_mm']):fail('Bước kéo nhỏ hơn khuôn.')
-    params['sheet_weight_kg']=data.sheet_weight_kg if data.sheet_weight_kg is not None else calculate_sheet_weight(
-        params['pull_mm'],spec['width'],spec['thickness'],params['density'])
+    for tool in standard.snapshot.get('molds') or [mold]:
+        if D(tool.get('Dai_Khuon') or 0)>D(params['pull_mm']) or D(tool.get('Rong_Khuon') or 0)>D(params['film_width_mm']):
+            fail('Khổ/kéo màng của lần chạy nhỏ hơn một khuôn trong định mức.')
+    geometry_changed=(D(params['pull_mm'])!=D(standard.parameters['pull_mm']) or
+        D(params['film_width_mm'])!=D(standard.parameters.get('film_width_mm') or spec['width']))
+    params['sheet_weight_kg']=(data.sheet_weight_kg if data.sheet_weight_kg is not None and not geometry_changed else
+        calculate_sheet_weight(params['pull_mm'],params['film_width_mm'],spec['thickness'],params['density']))
     source_items={i.product_id:i for i in db.scalars(select(StandardItem).where(StandardItem.standard_id==standard.id))}
     ids=sorted(i.order_line_id for i in data.items)
     query=select(OrderLine).where(OrderLine.id.in_(ids)).order_by(OrderLine.id)
@@ -122,7 +127,8 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
     for entry in data.items:
         line=lines[entry.order_line_id];template=source_items.get(line.product_id)
         if not template:fail(line.id+': sản phẩm không có trong định mức.')
-        if line.unit.strip().casefold()!=template.snapshot['unit'].strip().casefold():fail(line.id+': chưa xác minh quy đổi đơn vị.')
+        from app.modules.production.forming_units import is_piece_unit
+        if not is_piece_unit(line.unit):fail(f'{line.id}: định hình nhập theo Cái/Chiếc; CTĐH đang dùng {line.unit}. Không tự quy đổi từ đơn vị bế.')
         if line.product_id in cavities and cavities[line.product_id]!=entry.cavity:fail('Cùng sản phẩm phải dùng chung cavity, không tính cavity riêng theo CTĐH.')
         cavities[line.product_id]=entry.cavity;totals[line.product_id]+=entry.quantity
         other=other_quantities.get(line.id,ZERO)
@@ -132,7 +138,23 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
         if line.id in legacy_lines:fail(line.id+': cần đối soát lệnh cũ trước khi bố trí thêm.',409)
         snapshots[line.id]={**template.snapshot,'product_id':line.product_id,'unit':line.unit,'cavity':entry.cavity}
     remaining={product:qty-sum((i.completed_qty for i in old_items.values() if i.product_id==product and i.order_line_id in ids),ZERO) for product,qty in totals.items()}
-    cycles=min((qty/D(cavities[product])).to_integral_value(rounding=ROUND_CEILING) for product,qty in remaining.items())
+    suggested=min((qty/D(cavities[product])).to_integral_value(rounding=ROUND_CEILING) for product,qty in remaining.items())
+    old_params=run.run_snapshot.get('parameters',{}) if identifier and run.run_snapshot else {}
+    limit=old_params.get('planned_cycles_limit')
+    if data.planned_cycles is not None or limit is not None:
+        actual_cycles=db.scalar(select(func.coalesce(func.sum(FormingLog.good+FormingLog.ng),0)).where(
+            FormingLog.production_order_id==run.id,FormingLog.shift_snapshot.is_not(None))) if identifier else ZERO
+        actual_cycles=D(actual_cycles)
+        if data.planned_cycles is not None:
+            limit=int(actual_cycles)+data.planned_cycles
+        params['planned_cycles_limit']=int(limit);params['completed_cycles']=int(actual_cycles)
+    from app.modules.production.schedule_engine import requirements,ScheduleError
+    try:
+        req=requirements([{'product_id':lines[e.order_line_id].product_id,'planned_qty':e.quantity,
+            'completed_qty':old_items[e.order_line_id].completed_qty if e.order_line_id in old_items else 0,
+            'cavity':e.cavity} for e in data.items],params,run.id)
+    except ScheduleError as error:fail(str(error))
+    cycles=D(req['cycles'])
     needed=(D(params['sheet_weight_kg'])*cycles*(1+D(params['waste_percent'])/100)).quantize(material.SCALE,rounding=ROUND_CEILING)
     query=select(Allocation).where(Allocation.id.in_([m.allocation_id for m in data.materials]))
     allocations={a.id:a for a in db.scalars(query if preview else query.with_for_update())}

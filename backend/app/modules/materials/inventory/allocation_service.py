@@ -103,11 +103,12 @@ def target(db,order_line_id,standard_id,receipt_id,*,new=True):
     if not line or not standard:fail('CTĐH hoặc định mức không tồn tại.')
     item=db.get(StandardItem,(standard_id,line.product_id)) if line.product_id else None
     if not item:fail('Định mức không có sản phẩm của CTĐH.')
-    if line.unit.strip().casefold()!=str(item.snapshot.get('unit','')).strip().casefold():
-        fail('Đơn vị CTĐH khác đơn vị sản phẩm trong định mức; chưa có quy đổi được xác minh.')
+    from app.modules.production.forming_units import is_piece_unit
+    if not is_piece_unit(line.unit):
+        fail(f'{line.id}: định hình dùng Cái/Chiếc; CTĐH đang dùng "{line.unit}". Không tự quy đổi từ đơn vị bế.')
     if new:
         latest=db.scalar(select(func.max(Standard.revision)).where(Standard.code==standard.code))
-        if not standard.active or standard.revision!=latest:fail('Chọn phiên bản định mức mới nhất đang áp dụng.')
+        if not standard.active:fail('Phiên bản định mức này đã ngừng sử dụng.')
         if decimal(line.quantity)<=decimal(line.produced):fail('CTĐH không còn số lượng phải sản xuất.')
     source=db.execute(select(FilmReceipt,FilmLine.material_id).outerjoin(FilmLine,FilmLine.id==FilmReceipt.line_id)
         .where(FilmReceipt.id==receipt_id)).first()

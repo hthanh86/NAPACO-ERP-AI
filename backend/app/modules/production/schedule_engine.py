@@ -1,5 +1,6 @@
 """Deterministic, storage-free schedule arithmetic shared by preview and save."""
 from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime,timedelta
 from decimal import Decimal,InvalidOperation,ROUND_CEILING
 
@@ -42,7 +43,14 @@ def requirements(items,parameters,identifier):
             raise ScheduleError('INCONSISTENT_CAVITY','Cùng sản phẩm có cavity không nhất quán.',run_id=identifier)
         cavities[product]=int(cavity);totals[product]+=int(planned-done)
     cycles=min(ceil(Decimal(qty)/cavities[product]) for product,qty in totals.items())
-    return {'cycles':cycles,'cavities':cavities,'totals':totals,'seconds':seconds,'setup':setup,
+    suggested=cycles
+    if p.get('planned_cycles_limit') is not None:
+        limit=number(p['planned_cycles_limit'],'planned_cycles_limit',identifier,zero=True)
+        completed=number(p.get('completed_cycles',0),'completed_cycles',identifier,zero=True)
+        if limit!=limit.to_integral_value() or completed!=completed.to_integral_value():
+            raise ScheduleError('INVALID_CYCLES','Số bìa phải là số nguyên.',run_id=identifier)
+        cycles=max(0,int(limit-completed)) if suggested else 0
+    return {'cycles':cycles,'suggested_cycles':suggested,'cavities':cavities,'totals':totals,'seconds':seconds,'setup':setup,
         'weight':weight,'waste':waste,'base_kg':weight*cycles,'waste_kg':weight*cycles*waste/100,
         'required_kg':weight*cycles*(1+waste/100)}
 
@@ -94,6 +102,17 @@ class ResourceCalendar:
         if remaining and cutoff==self.end:
             raise ScheduleError('INSUFFICIENT_WORKING_WINDOW','Không đủ giờ làm trong khoảng tính; mở rộng kỳ hoặc chỉnh lịch máy.',machine_id=machine,remaining_seconds=str(remaining))
         return segments,remaining
+
+    def setup_start_before(self,machine,seconds,target,earliest,resources=()):
+        if not seconds:return target
+        floor=max(self.start,earliest,self.cursor.get(machine,self.start));remaining=Decimal(seconds)
+        occupied=[span for key in ['machine:'+machine,*resources] for span in self.busy[key]]
+        free=[span for left,right in self.windows.get(machine,[]) for span in subtract(max(left,floor),min(right,target),occupied) if span[1]>span[0]]
+        for left,right in reversed(free):
+            capacity=Decimal(str((right-left).total_seconds()))
+            if capacity>=remaining:return right-timedelta(seconds=float(remaining))
+            remaining-=capacity
+        raise ScheduleError('START_TOO_EARLY_FOR_SETUP','Giờ bắt đầu chạy chưa đủ thời gian setup sau đơn trước / thời điểm hiện tại. Chọn giờ muộn hơn hoặc để nối tiếp tự động.',machine_id=machine)
 
     def hold_wait(self,machine,start,end):
         start=max(start,self.cursor.get(machine,self.start))
@@ -152,7 +171,24 @@ def calculate(context):
             'orders':[],'warnings':list(context['warnings']),'engine_version':'production-scheduler-v1',
             'stops':context['stops'],'working_windows':{machine:[{'start':a,'end':b} for a,b in spans]
                 for machine,spans in context['windows'].items()}}
-    finished=defaultdict(list)
+    finished=defaultdict(list);visible_machines=set();view=context.get('reason_view')
+    def matches_view(run):
+        if not view:return True
+        if view.get('machine_id') and run['machine_id']!=view['machine_id']:return False
+        for item in run['items']:
+            label=context.get('line_labels',{}).get(item['order_line_id'],{})
+            if view.get('customer_id') and label.get('customer_id')!=view['customer_id']:continue
+            query=(view.get('q') or '').casefold()
+            if query and query not in ' '.join(str(label.get(k) or '') for k in ['id','product_name','po_number','order_id']).casefold():continue
+            return True
+        return False
+    def occupies_view(run,report):
+        if not matches_view(run):return False
+        if not view or run['id'] in context.get('changed_runs',set()):return True
+        spans=[*report['setup_segments'],*report['forming_segments'],*report.get('rest_segments',[])]
+        if any(span['start']<view['end'] and span['end']>view['start'] for span in spans):return True
+        if any(a.get('run_id')==run['id'] and a['start']<view['end'] and a['end']>view['start'] for a in context['actual']):return True
+        return report['status'] in {'unknown','released_waiting'} and context['start']<view['end'] and context['end']>view['start']
     for run in context['runs']:
         identifier=run['id'];params=run['snapshot'].get('parameters');policy=run['policy'];items=run['items']
         req=requirements(items,params,identifier)
@@ -169,21 +205,54 @@ def calculate(context):
         run_seconds=seconds*cycles;setup_seconds=Decimal(0) if run['has_actual'] or cycles==0 else setup
         waiting=policy['waiting'] or any(s['enabled'] and not s['hold_machine'] and not s['run_ended'] and s['run_id']==identifier for s in context['stops'])
         ready=max(context['start'],run['actual_end'] or context['start'],policy['ready_at'] or context['start'])
+        if run.get('future_only'):ready=max(ready,context['planning_now'])
         resources=['line:'+i['order_line_id'] for i in items]
-        setup_segments=[];forming=[];missing=run_seconds;left=Decimal(0)
+        setup_segments=[];forming=[];rest_segments=[];missing=run_seconds;left=Decimal(0)
         if not waiting and cycles:
+            if run.get('validate_start_reason',True) and policy.get('ready_at'):
+                automatic=max(context['start'],run['actual_end'] or context['start'])
+                if policy['ready_at']<calendar.cursor.get(run['machine_id'],context['start']):
+                    raise ScheduleError('START_BEFORE_PREVIOUS','Giờ bắt đầu trước khi đơn trước kết thúc (kể cả đơn ngoài khung nhìn). Đổi giờ hoặc đổi thứ tự kế hoạch.',run_id=identifier)
+                if any(a<=policy['ready_at']<b for a,b in calendar.busy['machine:'+run['machine_id']]):
+                    raise ScheduleError('START_TIME_CONFLICT','Giờ bắt đầu trùng lịch máy đã có (có thể nằm ngoài khung nhìn). Chọn giờ khác hoặc đổi thứ tự kế hoạch.',run_id=identifier,machine_id=run['machine_id'])
+                first_visible=matches_view(run) and run['machine_id'] not in visible_machines
+                if not first_visible and not policy.get('start_reason','').strip():
+                    probe_calendar=deepcopy(calendar)
+                    if policy.get('start_basis')=='forming':
+                        setup_probe,_=probe_calendar.place(run['machine_id'],setup_seconds,max(automatic,context.get('planning_now',automatic)) if run.get('future_only') else automatic,resources)
+                        automatic=setup_probe[-1][1] if setup_probe else automatic
+                    probe,_=probe_calendar.place(run['machine_id'],Decimal(1),automatic,resources)
+                    chosen,_=deepcopy(calendar).place(run['machine_id'],Decimal(1),ready,resources)
+                    if probe and chosen and chosen[0][0]>probe[0][0]:
+                        raise ScheduleError('START_REASON_REQUIRED','Bắt đầu khác thời điểm nối tiếp tự động: cần ghi lý do.',run_id=identifier)
+            if policy.get('ready_at') and policy.get('start_basis')=='forming':
+                chosen,_=deepcopy(calendar).place(run['machine_id'],Decimal(1),ready,resources)
+                if chosen:
+                    floor=max(context['start'],run['actual_end'] or context['start'])
+                    if run.get('future_only'):floor=max(floor,context['planning_now'])
+                    ready=calendar.setup_start_before(run['machine_id'],setup_seconds,chosen[0][0],floor,resources)
             setup_segments,left=calendar.place(run['machine_id'],setup_seconds,ready,resources)
             if not left:
                 forming,missing=calendar.place(run['machine_id'],run_seconds,setup_segments[-1][1] if setup_segments else ready,resources)
+                if not missing and policy.get('rest_minutes',0):
+                    rest_segments,rest_missing=calendar.place(run['machine_id'],Decimal(str(policy['rest_minutes']))*60,forming[-1][1],resources)
+                    missing+=rest_missing
         missing+=left
         status='released_waiting' if waiting else 'unknown' if missing else 'scheduled'
         report={'run_id':identifier,'run_version':run['version'],'machine_id':run['machine_id'],
             'official_code':run.get('official_code'),'release_state':run.get('release_state','legacy'),
             'machine_kind':run['snapshot'].get('machine_kind'),'planned_items':items,
-            'status':status,'cycles':cycles,'sheets':cycles,'setup_seconds':str(setup_seconds),'pure_seconds':str(run_seconds),
+            'status':status,'cycles':cycles,'suggested_cycles':req['suggested_cycles'],'sheets':cycles,
+            'planned_cycles_limit':params.get('planned_cycles_limit'),'completed_cycles':params.get('completed_cycles',0),'setup_seconds':str(setup_seconds),'pure_seconds':str(run_seconds),
+            'seconds_per_cycle':str(seconds),
             'base_kg':str(req['base_kg']),'waste_kg':str(req['waste_kg']),'required_kg':str(req['required_kg']),
             'waste_policy':'extra_material_allowance','yield_assumption':'no_future_ng',
             'setup_segments':[{'start':a,'end':b} for a,b in setup_segments],
+            'rest_segments':[{'start':a,'end':b} for a,b in rest_segments],
+            'rest_minutes':policy.get('rest_minutes',0),
+            'allocation_start':(setup_segments or forming or [(None,None)])[0][0],
+            'planned_start':forming[0][0] if forming else None,
+            'planned_end':(rest_segments or forming)[-1][1] if forming and not missing else None,
             'forming_segments':[{'start':a,'end':b} for a,b in forming],'unknown_seconds':str(missing),
             'first_forming_at':forming[0][0] if forming else None,'forming_end':forming[-1][1] if forming and not missing else None,
             'products':[],'stages':[],'material':run['material'],'line_quantities':[]}
@@ -223,6 +292,12 @@ def calculate(context):
                     pending=drop_consumed(stream,actual_input);quantity=sum(e['quantity'] for e in pending)
                     if not quantity:stream=actual_stream;continue
                     s=stage_map.get((line,stage))
+                    if not s and policy.get('defer_downstream',False):
+                        # Forming-only planning leaves downstream timing unknown.
+                        # Never fabricate a rate or treat formed goods as finished.
+                        stream=actual_stream+[{'quantity':quantity,'at':None,'estimated':True,
+                            'actual':False,'run_id':identifier}]
+                        continue
                     if not s:raise ScheduleError('MISSING_STAGE_PARAMETERS','Chưa có tốc độ/setup/bàn giao công đoạn sau.',run_id=identifier,order_line_id=line,stage=stage)
                     if s['unit'].strip().casefold()!=item['snapshot']['unit'].strip().casefold():
                         raise ScheduleError('HANDOFF_UNIT_MISMATCH','Đơn vị bàn giao khác đơn vị sản phẩm; chưa có quy đổi.',run_id=identifier,order_line_id=line)
@@ -260,6 +335,7 @@ def calculate(context):
                             'yield_assumption':'no_future_ng','unknown_seconds':str(unknown)})
                     stream=actual_stream+scheduled_output
                 finished[line].extend(e for e in stream if not e.get('actual'))
+        if occupies_view(run,report):visible_machines.add(run['machine_id'])
         result['jobs'].append(report)
     orders=defaultdict(list)
     for line in context['lines']:

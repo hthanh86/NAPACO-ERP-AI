@@ -28,11 +28,14 @@ class ItemInput(Input):
 
 
 class StandardInput(Input):
-    code: Key
-    name: str = Field(min_length=1,max_length=200)
+    code: str = Field('',max_length=100)
+    name: str = Field('',max_length=200)
     machine_id: Key
     material_id: Key
     mold_id: Key
+    extra_mold_ids:list[Key]=Field(default_factory=list,max_length=20)
+    film_width_mm:Positive|None=None
+    resin:str=Field('',max_length=100)
     pull_mm: Positive
     seconds_per_cycle: Positive
     density: Positive  # g/cm³; original purchasing convention
@@ -46,6 +49,49 @@ class StandardInput(Input):
     def distinct(self):
         if len({i.product_id for i in self.items}) != len(self.items):
             raise ValueError('Sản phẩm không được lặp trong cấu hình.')
+        return self
+
+
+class NewMoldInput(Input):
+    id:Key
+    product_id:Key
+    code:str=Field('',max_length=100)
+    name:str=Field(min_length=1,max_length=500)
+    length_mm:Positive
+    width_mm:Positive
+    height_mm:Positive|None=None
+    cavity:int=Field(gt=0,le=100000,strict=True)
+    location:str=Field('',max_length=500)
+    status:Literal['Sẵn sàng']='Sẵn sàng'
+
+    @model_validator(mode='after')
+    def valid_code(self):
+        if not self.name.strip():raise ValueError('Nhập Tên Mã Khuôn dùng trong sản xuất.')
+        return self
+
+
+class NewMaterialInput(Input):
+    resin:str=Field(min_length=1,max_length=100)
+    color:str=Field('',max_length=500)
+    grade:str=Field('',max_length=500)
+    width:Positive
+    thickness:Positive
+
+
+class StandardWithMoldsInput(Input):
+    standard:StandardInput
+    new_material:NewMaterialInput|None=None
+    molds:list[NewMoldInput]=Field(default_factory=list,max_length=100)
+    confirmed:bool=False
+
+    @model_validator(mode='after')
+    def confirm_molds(self):
+        if not self.confirmed:raise ValueError('Cần xác nhận thông số khuôn trước khi lưu.')
+        if len({m.id for m in self.molds})!=len(self.molds):raise ValueError('Khuôn mới bị trùng ID.')
+        if len({m.product_id for m in self.molds})!=len(self.molds):raise ValueError('Chỉ tạo một khuôn mới cho mỗi sản phẩm trong lần lưu này.')
+        selected={self.standard.mold_id,*self.standard.extra_mold_ids}
+        products={i.product_id for i in self.standard.items}
+        if any(m.id not in selected or m.product_id not in products for m in self.molds):raise ValueError('Khuôn mới phải được dùng cho sản phẩm trong định mức.')
         return self
 
 

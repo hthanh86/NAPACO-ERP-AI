@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from app.core.config import LEGACY_CONFIG
-from app.core.models import Audit
+from app.core.models import Audit,Sequence
+from sqlalchemy.dialects.mysql import insert
 from app.migrations.models import SourceRow
 from app.modules.materials.models import FilmMaterial
 from app.modules.products.models import Product
@@ -24,16 +25,8 @@ def fail(message, status=422):
 
 
 def tools_catalog(db):
-    """Reuse the same MySQL source catalog and configured headers as film purchasing."""
-    rows = db.scalars(select(SourceRow).where(SourceRow.book=='master',
-        SourceRow.sheet==LEGACY_CONFIG['SHEET_NAMES']['TOOLS']).order_by(SourceRow.row_number)).all()
-    if not rows:
-        return []
-    headers = rows[0].cells
-    required = ['MaCC', *LEGACY_CONFIG['COLUMNS']['TOOLS'].values()]
-    if not all(key in headers for key in required):
-        fail('Danh mục khuôn thiếu tiêu đề chuẩn.',503)
-    return [dict(zip(headers,r.cells)) for r in rows[1:] if r.cells and any(r.cells)]
+    from app.modules.master.tool_catalog import catalog
+    return catalog(db)
 
 
 def calculate_sheet_weight(pull_mm, width_mm, thickness_mm, density):
@@ -96,8 +89,62 @@ def standard_record(db,standard):
         'items':[{'product_id':i.product_id,'cavity':i.cavity,'edge':i.edge,'snapshot':i.snapshot} for i in items]}
 
 
-def save_standard(db,user,data,previous_id=None):
+def next_standard_id(db):
+    key='DM_'+datetime.now(ZONE).strftime('%y%m%d')
+    db.execute(insert(Sequence).values(name=key,value=0).on_duplicate_key_update(name=key))
+    counter=db.scalar(select(Sequence).where(Sequence.name==key).with_for_update())
+    counter.value+=1
+    return f'{key}_{counter.value:02d}'
+
+
+def material_options(db):
+    """Use existing independent resin, density, color and grade settings in MySQL."""
+    rows=list(db.scalars(select(SourceRow).where(SourceRow.book=='master',
+        SourceRow.sheet==LEGACY_CONFIG['SHEET_NAMES']['SETTINGS']).order_by(SourceRow.row_number)))
+    options={'resins':[],'densities':[],'colors':[],'grades':[]}
+    if not rows:return options
+    headers=[str(v).strip() for v in rows[0].cells];cols=LEGACY_CONFIG['COLUMNS']['SETTINGS']
+    def values(key):
+        if cols[key] not in headers:return []
+        index=headers.index(cols[key]);result=[]
+        for row in rows[1:]:
+            value=str(row.cells[index]).strip() if len(row.cells)>index and row.cells[index] is not None else ''
+            if value and value.casefold() not in {v.casefold() for v in result}:result.append(value)
+        return result
+    options.update(resins=values('RESINS'),colors=values('FILM_COLORS'),grades=values('GRADES'))
+    if cols['DENSITY_RESIN'] in headers and cols['DENSITY'] in headers:
+        ri,di=headers.index(cols['DENSITY_RESIN']),headers.index(cols['DENSITY'])
+        for row in rows[1:]:
+            if len(row.cells)<=max(ri,di):continue
+            resin=str(row.cells[ri] or '').strip()
+            try:density=float(str(row.cells[di]).replace(',','.'))
+            except (ValueError,TypeError):continue
+            canonical=next((v for v in options['resins'] if v.casefold()==resin.casefold()),resin)
+            choice={'resin':canonical,'density':density}
+            if resin and 0<density<=1000000 and choice not in options['densities']:options['densities'].append(choice)
+    return options
+
+
+def resin_catalog(db):
+    return material_options(db)['densities']
+
+
+def density_choices(db,material_ids):
+    from app.modules.materials.purchasing.models import FilmLine
+    catalog=resin_catalog(db)
+    resins={identifier:set() for identifier in material_ids}
+    if material_ids:
+        for identifier,resin in db.execute(select(FilmLine.material_id,FilmLine.resin).where(FilmLine.material_id.in_(material_ids)).distinct()):
+            if resin:resins[identifier].add(resin.strip().casefold())
+    return {identifier:{'choices':[v for v in catalog if v['resin'].casefold() in values] or catalog,
+        'automatic':len(values)==1 and len([v for v in catalog if v['resin'].casefold() in values])==1}
+        for identifier,values in resins.items()}
+
+
+def save_standard(db,user,data,previous_id=None,*,identifier=None):
     revision = 1
+    identifier=identifier or next_standard_id(db)
+    if not previous_id:data=data.model_copy(update={'code':identifier})
     if previous_id:
         previous = db.scalar(select(ProductionStandard).where(ProductionStandard.id==previous_id).with_for_update())
         if not previous:
@@ -112,50 +159,53 @@ def save_standard(db,user,data,previous_id=None):
     machine = db.scalar(select(Machine).where(Machine.id==data.machine_id).with_for_update())
     if not machine or machine.kind not in {'automatic','semi_automatic'}:
         fail('Chọn máy định hình đã phân loại tự động/bán tự động.')
-    if data.active and machine.status not in {'ready','running'}:
-        fail('Máy không ở trạng thái sử dụng được; có thể lưu định mức ngừng dùng.')
+    if machine.status not in {'ready','running'}:
+        fail('Máy chưa ở trạng thái sử dụng được; chọn máy khác hoặc cập nhật trạng thái máy.')
     material = db.get(FilmMaterial,data.material_id)
     if not material or not material.width or not material.thickness:
         fail('Vật liệu phải tồn tại và có khổ/độ dày hợp lệ.')
-    if machine.max_width_mm and material.width > machine.max_width_mm:
+    if machine and machine.max_width_mm and material.width > machine.max_width_mm:
         fail('Khổ màng vượt khả năng máy.')
-    if machine.max_pull_mm and data.pull_mm > machine.max_pull_mm:
+    if machine and machine.max_pull_mm and data.pull_mm > machine.max_pull_mm:
         fail('Bước kéo vượt khả năng máy.')
-    molds = [t for t in tools_catalog(db) if str(t.get('MaCC') or '')==data.mold_id]
-    if len(molds)!=1 or molds[0].get('LoaiCC')!=LEGACY_CONFIG['MOLD_TYPES']['FORMING']:
-        fail('Chọn mã công cụ MaCC của khuôn định hình hiện có.')
-    mold = molds[0]
-    try:
-        mold_width = float(mold.get('Rong_Khuon') or 0)
-        mold_length = float(mold.get('Dai_Khuon') or 0)
-    except (ValueError,TypeError):
-        fail('Kích thước khuôn nguồn không hợp lệ.')
-    if mold_width > float(material.width) or mold_length > data.pull_mm:
-        fail('Khổ màng hoặc bước kéo nhỏ hơn khuôn.')
+    selected_molds=list(dict.fromkeys([data.mold_id,*data.extra_mold_ids]))
+    catalog={str(t.get('MaCC') or ''):t for t in tools_catalog(db)}
+    molds=[catalog[k] for k in selected_molds if k in catalog and catalog[k].get('LoaiCC')==LEGACY_CONFIG['MOLD_TYPES']['FORMING']]
+    if len(molds)!=len(selected_molds):fail('Chọn khuôn định hình hợp lệ trong danh mục.')
+    mold=molds[0]
+    width=data.film_width_mm or float(material.width)
+    if abs(width-float(material.width))>0.0001:fail('Khổ màng định mức khác khổ NVL. Chọn mã NVL có đúng khổ hoặc sửa khổ định mức theo NVL sử dụng.')
+    for tool in molds:
+        try:mw,ml=float(tool.get('Rong_Khuon') or 0),float(tool.get('Dai_Khuon') or 0)
+        except (TypeError,ValueError):fail('Kích thước khuôn không hợp lệ.')
+        if mw<=0 or ml<=0 or mw>width or ml>data.pull_mm:fail('Khổ màng/kéo màng không đủ cho khuôn đã chọn.')
     ids = [i.product_id for i in data.items]
     products = {p.id:p for p in db.scalars(select(Product).where(Product.id.in_(ids))).all()}
     if len(products)!=len(ids):
         fail('Có sản phẩm không tồn tại.')
-    weight = calculate_sheet_weight(data.pull_mm,material.width,material.thickness,data.density)
+    name=data.name or ('Ghep_Khuon_' if len(molds)>1 or len(data.items)>1 else '')+f'{data.resin or "NVL"}-{width:g}x{data.pull_mm:g}-{data.seconds_per_cycle:g}(chuky)'
+    if len(name)>200:fail('Tên định mức tối đa 200 ký tự; cần nhập tên ngắn hơn.')
+    weight = calculate_sheet_weight(data.pull_mm,width,material.thickness,data.density)
     parameters = data.model_dump(exclude={'code','name','machine_id','material_id','mold_id','active','approved','items'})
+    parameters['film_width_mm']=width
     parameters['sheet_weight_kg'] = weight
     parameters['units'] = {'pull':'mm','width':'mm','thickness':'mm','density':'g/cm3',
         'speed':'seconds/cycle','weight':'kg/sheet','setup':'minutes','waste':'percent',
         'sheets_per_cycle':1,'product_per_sheet':'item.cavity'}
-    standard = ProductionStandard(id=str(uuid4()),code=data.code,revision=revision,
-        name=data.name,machine_id=data.machine_id,material_id=data.material_id,mold_id=data.mold_id,
-        active=data.active,parameters=parameters,created_by=user.id,
-        snapshot={'machine':machine_record(machine),'mold':mold,
+    standard = ProductionStandard(id=identifier or str(uuid4()),code=data.code,revision=revision,
+        name=name,machine_id=data.machine_id,material_id=data.material_id,mold_id=data.mold_id,
+        active=True,parameters=parameters,created_by=user.id,
+        snapshot={'machine':machine_record(machine),'mold':mold,'molds':molds,
                   'material':{c.name:str(getattr(material,c.name)) for c in FilmMaterial.__table__.columns if c.name!='source'},
                   'formula':'purchasing/calculation.js:v1',
-                  'approval':{'approved':True,'by':user.id,'at':datetime.now(ZONE).isoformat()} if data.approved else None})
+                  'approval':{'approved':True,'by':user.id,'at':datetime.now(ZONE).isoformat(),'basis':'save_version'}})
     db.add(standard)
     db.flush()
     for item in data.items:
         product = products[item.product_id]
         db.add(ProductionStandardItem(standard_id=standard.id,**item.model_dump(),snapshot={
-            'name':product.name,'code':product.code,'unit':product.unit,
-            'route':(['forming_cutting'] if machine.kind=='automatic' else ['forming','cutting']) + (['edge'] if item.edge else [])}))
+            'name':product.name,'code':product.code,'unit':product.unit if str(product.unit).strip().casefold() in {'cái','chiếc'} else 'Cái','product_catalog_unit':product.unit,
+            'route':(['forming_cutting'] if machine and machine.kind=='automatic' else ['forming','cutting']) + (['edge'] if item.edge else [])}))
     db.flush()
     audit(db,user,'PRODUCTION_STANDARD_REVISION',standard.id,{'code':data.code,'revision':revision})
     return standard_record(db,standard)

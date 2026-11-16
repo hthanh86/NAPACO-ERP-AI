@@ -35,9 +35,13 @@ class StagePolicy(Input):
 class JobPolicy(Input):
     run_id:Key
     ready_at:datetime|None=None
+    start_basis:Literal['setup','forming']='setup'
     line_order:list[Key]=Field(default_factory=list,max_length=100)
     stages:list[StagePolicy]=Field(default_factory=list,max_length=200)
     waiting:bool=False
+    defer_downstream:bool=False
+    rest_minutes:float=Field(0,ge=0,le=100000,allow_inf_nan=False)
+    start_reason:str=Field('',max_length=2000)
 
     @model_validator(mode='after')
     def distinct(self):

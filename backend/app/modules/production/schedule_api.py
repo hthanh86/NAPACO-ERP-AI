@@ -15,6 +15,42 @@ from app.modules.production import schedule_daily,schedule_compare,schedule_actu
 router=APIRouter(prefix='/api/production/schedule',tags=['production-schedule'])
 
 
+from app.modules.production.planning_schemas import Input,StandardInput
+from pydantic import Field
+
+
+class DraftConfiguration(Input):
+    standard:StandardInput
+    standard_id:str|None=Field(None,min_length=1,max_length=36)
+    grouped:bool=False
+    group_id:str=Field('',max_length=100)
+
+
+@router.post('/draft-configuration',status_code=201)
+def draft_configuration(data:DraftConfiguration,key:str=KeyHeader,user=Depends(access),db=Depends(get_db)):
+    """Allocate a group only; plan overrides never write the standard catalog."""
+    from app.core.models import Sequence
+    from app.modules.products.models import Product
+    from app.modules.production import planning_service
+    def perform():
+        def allocate(prefix):
+            name=prefix+'_'+datetime.now(planning_service.ZONE).strftime('%y%m%d')
+            counter=db.get(Sequence,name)
+            if counter is None:
+                counter=Sequence(name=name,value=0);db.add(counter);db.flush()
+            counter.value+=1
+            return f'{name}_{counter.value:02d}'
+        if not data.standard_id:fail('Chọn định mức đã lưu tại Thiết lập định mức trước khi lập kế hoạch.')
+        from app.modules.production.planning_models import ProductionStandard
+        existing=db.get(ProductionStandard,data.standard_id)
+        if not existing or not existing.active:fail('Định mức không còn sử dụng được.',409)
+        standard=planning_service.standard_record(db,existing)
+        group=data.group_id if data.grouped else ''
+        if data.grouped and not group:group=allocate('GRP')
+        return {'standard':standard,'group_id':group}
+    return write(db,user,'production:schedule:draft-configuration',data,key,perform)
+
+
 def scope(view_start:datetime|None=None,view_end:datetime|None=None,
           machine_id:str=Query('',max_length=100),customer_id:str=Query('',max_length=100),q:str=Query('',max_length=200)):
     if (view_start is None)!=(view_end is None):fail('Cần cả hai mốc khoảng xem.')
@@ -32,7 +68,7 @@ def ready(db):
 def preview(data:ScheduleInput,user=Depends(access),db=Depends(get_db),view=Depends(scope)):
     ready(db)
     if view['start']:
-        with db.no_autoflush:outcome=service.prepare(db,user,data)
+        with db.no_autoflush:outcome=service.prepare(db,user,data,reason_view=view)
         projected=schedule_view.project(db,outcome['result'],outcome['_canonical'],data.base_version,configs=outcome['_configs'],**view)
         projected['day']=outcome['_snapshot_context']['day']
         return service.encoded({'preview_hash':outcome['preview_hash'],'base_version':data.base_version,
@@ -44,7 +80,7 @@ def preview(data:ScheduleInput,user=Depends(access),db=Depends(get_db),view=Depe
 def save(data:ScheduleSaveInput,key:str=KeyHeader,user=Depends(access),db=Depends(get_db),view=Depends(scope)):
     ready(db)
     def perform():
-        result=service.save(db,user,data)
+        result=service.save(db,user,data,reason_view=view if view['start'] else None)
         if view['start']:
             row=db.get(SchedulePlan,result['id'])
             workspace=schedule_view.project(db,row.result,row.request,row.version,**view,frozen_context=row.context)

@@ -29,9 +29,11 @@ class RunInput(Input):
     parent_run_id:Key|None=None
     items:list[RunItemInput]=Field(min_length=1,max_length=100)
     materials:list[RunMaterialInput]=Field(default_factory=list,max_length=100)
+    planned_cycles:Annotated[int,Field(gt=0,le=1000000000,strict=True)]|None=None
     seconds_per_cycle:Positive|None=None
     pull_mm:Positive|None=None
     sheet_weight_kg:Positive|None=None
+    film_width_mm:Positive|None=None
     setup_minutes:float|None=Field(None,ge=0,le=100000,allow_inf_nan=False)
     waste_percent:float|None=Field(None,ge=0,le=100,allow_inf_nan=False)
     history_selection:HistorySelection|None=None

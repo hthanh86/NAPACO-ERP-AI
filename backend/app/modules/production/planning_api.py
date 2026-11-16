@@ -10,7 +10,8 @@ from app.modules.materials.models import FilmMaterial
 from app.modules.products.models import Product
 from app.modules.customers.models import Customer
 from app.modules.production.planning_models import Machine, ProductionStandard, ProductionStandardItem, MachineCalendarException
-from app.modules.production.planning_schemas import MachineInput, StandardInput, CalendarInput
+from app.modules.production.planning_schemas import MachineInput, StandardInput, CalendarInput, StandardWithMoldsInput
+from app.modules.materials.inventory.allocation_api import write,KeyHeader
 from app.modules.production import planning_service as service
 
 router = APIRouter()
@@ -58,7 +59,7 @@ def machines(q: str=Query('',max_length=200),kind: str=Query('',max_length=30),
              user=Depends(access),db=Depends(get_db)):
     statement = select(Machine)
     if q: statement = statement.where(or_(Machine.id.contains(q,autoescape=True),Machine.name.contains(q,autoescape=True)))
-    if kind: statement = statement.where(Machine.kind==kind)
+    if kind: statement = statement.where(Machine.kind.in_(['automatic','semi_automatic']) if kind=='forming' else Machine.kind==kind)
     if status: statement = statement.where(Machine.status==status)
     total = db.scalar(select(func.count()).select_from(statement.subquery()))
     return {'items':[service.machine_record(m) for m in db.scalars(statement.order_by(Machine.id).offset((page-1)*size).limit(size))],
@@ -76,10 +77,27 @@ def update_machine(identifier: str,data: MachineInput,user=Depends(access),db=De
 
 
 @router.get('/api/production/references/{kind}')
-def references(kind: str,q: str=Query('',max_length=200),page: int=Query(1,ge=1),
-               size: int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
+def references(kind: str,q: str=Query('',max_length=200),product_id: str=Query('',max_length=100),page: int=Query(1,ge=1),
+               size: int=Query(25,ge=1,le=100),resin:str=Query('',max_length=100),thickness:float|None=Query(None,gt=0),width:float|None=Query(None,gt=0),color:str=Query('',max_length=500),grade:str=Query('',max_length=500),product_ids:list[str]=Query(default=[]),user=Depends(access),db=Depends(get_db)):
+    if kind=='run-options':
+        if len(product_ids)>100:service.fail('Tối đa 100 sản phẩm.')
+        wanted=set(product_ids)
+        molds=[t for t in service.tools_catalog(db) if t.get('LoaiCC')==service.LEGACY_CONFIG['MOLD_TYPES']['FORMING'] and t.get('MaSP') in wanted]
+        if len(molds)>200:service.fail('Quá nhiều khuôn; thu hẹp nhóm sản phẩm.')
+        return {**service.material_options(db),'molds':molds}
+    if kind=='material-spec':
+        if not resin or thickness is None or width is None:service.fail('Nhập loại nhựa, độ dày và khổ nhựa.')
+        from app.modules.materials.catalog_service import find_specs
+        rows=find_specs(db,width,thickness,color,grade)
+        if not rows:
+            from fastapi import HTTPException
+            raise HTTPException(404,detail={'code':'MATERIAL_SPEC_NEW','message':'Quy cách NVL mới; có thể xác nhận lưu cùng định mức.'})
+        if len(rows)>1:service.fail('Có nhiều NVL khớp quy cách. Chọn rõ màu và Cấp Độ; không tự chọn ngầm hoặc tạo thêm mã trùng.')
+        row=rows[0]
+        return {key:getattr(row,key) for key in ['id','grade','color','thickness','width']}
     if kind=='molds':
         items = [t for t in service.tools_catalog(db) if t.get('LoaiCC')==service.LEGACY_CONFIG['MOLD_TYPES']['FORMING']]
+        if product_id:items=[t for t in items if str(t.get('MaSP') or '').strip()==product_id]
         if q: items = [t for t in items if q.casefold() in ' '.join(str(v or '') for v in t.values()).casefold()]
         return {'items':items[(page-1)*size:page*size],'total':len(items)}
     if kind=='customers':
@@ -97,13 +115,19 @@ def references(kind: str,q: str=Query('',max_length=200),page: int=Query(1,ge=1)
     if q:
         statement = statement.where(or_(*[col.cast(String).contains(q,autoescape=True) for col in cols]))
     total = db.scalar(select(func.count()).select_from(statement.subquery()))
-    return {'items':[dict(r) for r in db.execute(statement.order_by(model.id).offset((page-1)*size).limit(size)).mappings()],
-            'total':total,'page':page,'size':size}
+    items=[dict(r) for r in db.execute(statement.order_by(model.id).offset((page-1)*size).limit(size)).mappings()]
+    if kind=='materials':
+        defaults=service.density_choices(db,[i['id'] for i in items])
+        for item in items:item['density_defaults']=defaults[item['id']]
+    return {'items':items,'total':total,'page':page,'size':size}
 
 
 @router.get('/api/production/standards')
 def standards(q: str=Query('',max_length=200),machine_id: str=Query('',max_length=100),
               product_id: str=Query('',max_length=100),history: bool=False,
+              material_id:str=Query('',max_length=100),mold_id:str=Query('',max_length=100),resin:str=Query('',max_length=100),
+              thickness:float|None=Query(None,gt=0),color:str=Query('',max_length=500),grade:str=Query('',max_length=500),
+              seconds_per_cycle:float|None=Query(None,gt=0,le=1000000),pull_mm:float|None=Query(None,gt=0),film_width_mm:float|None=Query(None,gt=0),
               page: int=Query(1,ge=1),size: int=Query(25,ge=1,le=100),
               user=Depends(access),db=Depends(get_db)):
     cols = [ProductionStandard.id,ProductionStandard.code,ProductionStandard.name,ProductionStandard.revision,
@@ -114,6 +138,16 @@ def standards(q: str=Query('',max_length=200),machine_id: str=Query('',max_lengt
         statement = statement.join(latest,(ProductionStandard.code==latest.c.code)&(ProductionStandard.revision==latest.c.revision))
     if q: statement = statement.where(or_(ProductionStandard.code.contains(q,autoescape=True),ProductionStandard.name.contains(q,autoescape=True)))
     if machine_id: statement = statement.where(ProductionStandard.machine_id==machine_id)
+    if thickness is not None or color or grade:
+        statement=statement.join(FilmMaterial,FilmMaterial.id==ProductionStandard.material_id)
+        if thickness is not None:statement=statement.where(func.abs(FilmMaterial.thickness-thickness)<0.000001)
+        if color:statement=statement.where(func.lower(FilmMaterial.color)==color.strip().lower())
+        if grade:statement=statement.where(func.lower(FilmMaterial.grade)==grade.strip().lower())
+    if material_id:statement=statement.where(ProductionStandard.material_id==material_id)
+    if mold_id:statement=statement.where(ProductionStandard.mold_id==mold_id)
+    if resin:statement=statement.where(ProductionStandard.parameters['resin'].as_string()==resin)
+    for key,value in [('seconds_per_cycle',seconds_per_cycle),('pull_mm',pull_mm),('film_width_mm',film_width_mm)]:
+        if value is not None:statement=statement.where(func.abs(ProductionStandard.parameters[key].as_float()-value)<0.000001)
     if product_id:
         statement = statement.where(ProductionStandard.id.in_(select(ProductionStandardItem.standard_id).where(ProductionStandardItem.product_id==product_id)))
     total = db.scalar(select(func.count()).select_from(statement.subquery()))
@@ -131,6 +165,28 @@ def standard(identifier: str,user=Depends(access),db=Depends(get_db)):
 @router.post('/api/production/standards',status_code=201)
 def create_standard(data: StandardInput,user=Depends(access),db=Depends(get_db)):
     return commit(db,lambda:service.save_standard(db,user,data))
+
+
+@router.post('/api/production/standards/with-molds',status_code=201)
+def create_standard_with_molds(data: 'StandardWithMoldsInput',key:str=KeyHeader,user=Depends(access),db=Depends(get_db)):
+    def perform():
+        from app.modules.master.tool_catalog import create_molds
+        mapping=create_molds(db,user,data.molds)
+        standard=data.standard.model_copy(update={'mold_id':mapping.get(data.standard.mold_id,data.standard.mold_id),'extra_mold_ids':[mapping.get(identifier,identifier) for identifier in data.standard.extra_mold_ids]})
+        if data.new_material:
+            spec=data.new_material
+            if spec.resin.casefold()!=standard.resin.casefold() or abs(spec.width-(standard.film_width_mm or 0))>0.000001:
+                service.fail('Quy cách NVL mới phải khớp loại nhựa và khổ màng của định mức.')
+            from app.modules.materials.catalog_service import ensure_spec
+            material=ensure_spec(db,user,spec)
+            standard=standard.model_copy(update={'material_id':material.id})
+        selected={standard.mold_id,*standard.extra_mold_ids}
+        products={i.product_id for i in data.standard.items}
+        molds=[m for m in service.tools_catalog(db) if m.get('MaCC') in selected]
+        if {m.get('MaSP') for m in molds}!=products or any(m.get('LoaiCC')!=service.LEGACY_CONFIG['MOLD_TYPES']['FORMING'] for m in molds):
+            service.fail('Mỗi sản phẩm cần có khuôn định hình đúng liên kết trong định mức.')
+        return service.save_standard(db,user,standard)
+    return write(db,user,'production:standard:with-molds',data,key,perform)
 
 
 @router.post('/api/production/standards/{identifier}/revisions',status_code=201)

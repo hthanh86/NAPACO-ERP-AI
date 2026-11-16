@@ -62,12 +62,12 @@ def page(user=Depends(access)):
 
 @router.get('/api/production/preparation')
 def listing(q: str=Query('',max_length=200),customer_id: str=Query('',max_length=100),
-            start: date|None=None,end: date|None=None,has_hold: bool|None=None,
+            start: date|None=None,end: date|None=None,has_hold: bool|None=None,unscheduled_now: bool=False,
             standard_id: str|None=Query(None,max_length=36),line_id: str|None=Query(None,max_length=100),
             page: int=Query(1,ge=1),size: int=Query(25,ge=1,le=100),user=Depends(access),db=Depends(get_db)):
     ready(db)
     return preparation(db,q=q,customer_id=customer_id,start=start,end=end,has_hold=has_hold,
-                       standard_id=standard_id,line_id=line_id,page=page,size=size)
+                       standard_id=standard_id,line_id=line_id,page=page,size=size,unscheduled_now=unscheduled_now)
 
 
 @router.get(PREFIX+'/sources')

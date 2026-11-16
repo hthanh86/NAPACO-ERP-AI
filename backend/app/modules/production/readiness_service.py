@@ -12,9 +12,40 @@ from app.modules.materials.inventory.allocation_models import MaterialAllocation
 from app.modules.materials.inventory import allocation_service as materials
 from app.modules.materials.purchasing.models import FilmLine, FilmPO
 from app.modules.materials.receiving.models import FilmReceipt
+from app.modules.materials.models import FilmMaterial
 
 
-def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,standard_id=None,line_id=None,page=1,size=25):
+def current_or_future_planned_lines(db):
+    """Use the whole latest saved plan, regardless of the current UI filters."""
+    from app.modules.production.schedule_models import SchedulePlan
+    from app.modules.production.run_models import ProductionOrderItem
+    from app.modules.production.release_service import now
+    from app.modules.production.schedule_actual import stamp
+    from app.modules.production.planning_service import ZONE
+    plan=db.execute(select(SchedulePlan.result,SchedulePlan.request).order_by(SchedulePlan.version.desc()).limit(1)).first()
+    if not plan:return set()
+    jobs=(plan.result or {}).get('jobs',[])
+    moment=now().replace(tzinfo=ZONE)
+    horizon_end=stamp((plan.request or {}).get('end'))
+    policies={p['run_id']:p for p in (plan.request or {}).get('jobs',[])}
+    def has_current_or_future_slot(job):
+        if any(stamp(span.get('end')) and stamp(span['end'])>moment
+                for span in [*job.get('setup_segments',[]),*job.get('forming_segments',[])]):return True
+        # Still assigned in the current/future plan, but its finish cannot be
+        # calculated (e.g. insufficient calendar). Do not offer it as unplanned.
+        ready=stamp(policies.get(job['run_id'],{}).get('ready_at'))
+        return job.get('status')=='unknown' and bool(
+            horizon_end and horizon_end>moment or ready and ready>=moment)
+    run_ids={job['run_id'] for job in jobs if job.get('machine_id') and has_current_or_future_slot(job)}
+    if not run_ids:return set()
+    return set(db.scalars(select(ProductionOrderItem.order_line_id).join(ProductionOrder,
+        ProductionOrder.id==ProductionOrderItem.run_id).where(
+        ProductionOrderItem.run_id.in_(run_ids),ProductionOrderItem.enabled.is_(True),
+        ProductionOrderItem.planned_qty>ProductionOrderItem.completed_qty,
+        ProductionOrder.status.in_(['Chưa chạy','Đang chạy']))))
+
+
+def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,standard_id=None,line_id=None,page=1,size=25,unscheduled_now=False):
     delivery=func.coalesce(OrderLine.delivery_date,Order.delivery_date)
     query=(select(OrderLine.id,OrderLine.product_id,OrderLine.quantity,OrderLine.produced,OrderLine.delivered,
         OrderLine.unit,OrderLine.film_line_id,Order.id.label('order_id'),Order.po_number,
@@ -22,6 +53,9 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
         delivery.label('delivery_date')).join(Order,Order.id==OrderLine.order_id)
         .join(Customer,Customer.id==Order.customer_id).outerjoin(Product,Product.id==OrderLine.product_id)
         .where(OrderLine.quantity>OrderLine.produced))
+    if unscheduled_now:
+        assigned=current_or_future_planned_lines(db)
+        if assigned:query=query.where(OrderLine.id.not_in(assigned))
     if q:
         query=query.where(or_(*[col.contains(q,autoescape=True) for col in [OrderLine.id,Order.po_number,Product.name,Customer.name,Order.id]]))
     if customer_id:query=query.where(Order.customer_id==customer_id)
@@ -36,13 +70,21 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
     rows=[dict(r) for r in db.execute(query.order_by(delivery,OrderLine.id).offset((page-1)*size).limit(size)).mappings()]
     if not rows:return {'items':[],'total':total,'page':page,'size':size}
     line_ids=[r['id'] for r in rows];product_ids={r['product_id'] for r in rows if r['product_id']}
-    scheduled={}
+    scheduled={};existing_runs=defaultdict(list)
     if inspect(db.connection()).has_table('production_order_items'):
         from app.modules.production.run_models import ProductionOrderItem
         scheduled=dict(db.execute(select(ProductionOrderItem.order_line_id,
             func.sum(ProductionOrderItem.planned_qty-ProductionOrderItem.completed_qty)).join(ProductionOrder,
             ProductionOrder.id==ProductionOrderItem.run_id).where(ProductionOrderItem.order_line_id.in_(line_ids),
             ProductionOrder.status.in_(['Chưa chạy','Đang chạy']),ProductionOrderItem.enabled.is_(True)).group_by(ProductionOrderItem.order_line_id)).all())
+        if unscheduled_now:
+            for member in db.execute(select(ProductionOrderItem.order_line_id,ProductionOrder.id,
+                    ProductionOrder.official_code,ProductionOrder.machine_id).join(ProductionOrder,
+                    ProductionOrder.id==ProductionOrderItem.run_id).where(
+                    ProductionOrderItem.order_line_id.in_(line_ids),ProductionOrderItem.enabled.is_(True),
+                    ProductionOrderItem.planned_qty>ProductionOrderItem.completed_qty,
+                    ProductionOrder.status.in_(['Chưa chạy','Đang chạy']))).mappings():
+                existing_runs[member['order_line_id']].append(dict(member))
     allocations=db.scalars(select(Allocation).where(Allocation.order_line_id.in_(line_ids))).all()
     by_line=defaultdict(list)
     for a in allocations:by_line[a.order_line_id].append(a)
@@ -53,6 +95,21 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
         .where(Item.product_id.in_(product_ids),Standard.active.is_(True)).order_by(Standard.code)).all()
     by_product=defaultdict(list)
     for standard,item in options:by_product[item.product_id].append((standard,item))
+    free_by_material={};material_labels={}
+    if unscheduled_now:
+        material_ids={standard.material_id for standard,item in options}
+        if material_ids:
+            stock=select(FilmLine.material_id.label('material_id'),FilmLine.resin.label('resin'),func.greatest(
+                materials.stock_expression()-materials.held_expression(),0).label('free_kg')).join(
+                FilmLine,FilmLine.id==FilmReceipt.line_id).where(
+                FilmLine.material_id.in_(material_ids),FilmReceipt.status=='OK').select_from(FilmReceipt).subquery()
+            totals=db.execute(select(stock.c.material_id,func.sum(stock.c.free_kg).label('free_kg'),
+                func.group_concat(func.distinct(stock.c.resin)).label('resins')).group_by(stock.c.material_id)).mappings().all()
+            free_by_material={r['material_id']:r['free_kg'] for r in totals}
+            resins={r['material_id']:r['resins'] for r in totals}
+            material_labels={m.id:' · '.join(str(v) for v in [resins.get(m.id),m.grade,m.color,
+                f'{m.thickness.normalize():f} × {m.width.normalize():f} mm' if m.thickness and m.width else None] if v)
+                for m in db.scalars(select(FilmMaterial).where(FilmMaterial.id.in_(material_ids)))}
     # Include explicitly selected historical version for existing reservation inspection.
     if standard_id and not any(s.id==standard_id for s,i in options):
         for standard,item in db.execute(select(Standard,Item).join(Item,Item.standard_id==Standard.id)
@@ -83,14 +140,17 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
         candidates=by_product[row['product_id']]
         row['standard_options']=[{'id':s.id,'code':s.code,'revision':s.revision,'material_id':s.material_id,
             'cavity':i.cavity,'active':s.active} for s,i in candidates]
-        selected=next(((s,i) for s,i in candidates if s.id==standard_id),None) if standard_id else (candidates[0] if len(candidates)==1 else None)
+        selected=next(((s,i) for s,i in candidates if s.id==standard_id),None) if standard_id else (candidates[0] if candidates and (len(candidates)==1 or unscheduled_now) else None)
         row['selected_standard_id']=selected[0].id if selected else None
         row['demand_status']='defined' if selected else 'choose_standard' if candidates else 'missing_standard'
         demand=None
         if selected:
             standard,item=selected
-            if row['unit'].strip().casefold()!=str(item.snapshot.get('unit','')).strip().casefold():
+            from app.modules.production.forming_units import is_piece_unit
+            if not is_piece_unit(row['unit']):
                 row['demand_status']='unit_mismatch'
+                row['unit_issue']={'order_unit':row['unit'],'standard_unit':item.snapshot.get('unit',''),
+                    'message':f'CTĐH: {row["unit"]}; định mức: {item.snapshot.get("unit", "")}. Chưa xác minh quy đổi, chưa tính được nhu cầu NVL.'}
             else:
                 sheets=(remaining/materials.decimal(item.cavity)).to_integral_value(rounding=ROUND_CEILING)
                 base=materials.decimal(standard.parameters['sheet_weight_kg'])*sheets
@@ -101,6 +161,10 @@ def preparation(db,*,q='',customer_id='',start=None,end=None,has_hold=None,stand
                     'total_kg':str((base+waste).quantize(materials.SCALE,rounding=ROUND_CEILING)),
                     'waste_percent':standard.parameters['waste_percent'],'material_id':standard.material_id}
         row['demand']=demand
+        if unscheduled_now:
+            row['existing_runs']=existing_runs[row['id']]
+            row['material_description']=material_labels.get(selected[0].material_id) if selected else None
+            row['free_stock_kg']=str(free_by_material.get(selected[0].material_id,0)) if selected else None
         all_holds=sum((a.held_kg for a in by_line[row['id']]),materials.ZERO)
         usable=sum((a.held_kg for a in by_line[row['id']] if receipt_balances.get(a.receipt_id,{}).get('eligible') and
             (not demand or receipt_balances[a.receipt_id]['material_id']==demand['material_id'])),materials.ZERO)
