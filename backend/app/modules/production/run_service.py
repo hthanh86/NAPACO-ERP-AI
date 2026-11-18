@@ -236,7 +236,7 @@ def save_run(db,user,data,identifier=None,*,preview=False,exclude_run_ids=(),end
     db.flush();return detail(db,run.id)
 
 
-def change_state(db,user,identifier,data,start=False,*,preview=False):
+def change_state(db,user,identifier,data,start=False,*,preview=False,require_sample=True):
     run=run_lock(db,identifier,data.version,readonly=preview)
     if start:
         from app.modules.production.release_service import require_released,assignment
@@ -252,7 +252,7 @@ def change_state(db,user,identifier,data,start=False,*,preview=False):
             code=db.scalar(select(Run.official_code).where(Run.id==other)) or 'khác'
             fail('Máy đang thuộc đợt chưa đóng của LSX '+code+'. Đóng đợt đó trước khi chuyển LSX.',409)
         from app.modules.production.sample_service import gate
-        gate(db,run.id,run.machine_id)
+        if require_sample:gate(db,run.id,run.machine_id)
         if not preview:run.status=RUNNING
     else:
         if run.status==ENDED:fail('Lần chạy đã kết thúc.',409)
@@ -288,7 +288,7 @@ def shift_context(db,identifier,exclude_log=None,until=None,*,readonly=False):
     return {**source_contexts(db,[identifier],exclude_log=exclude_log,until=until)[identifier],'run_version':run.version}
 
 
-def save_shift(db,user,identifier,data,edit_id=None):
+def save_shift(db,user,identifier,data,edit_id=None,*,require_sample=True):
     run=run_lock(db,identifier,data.run_version)
     from app.modules.production.release_service import check_interval,machine_expression
     if run.status!=RUNNING:fail('Chỉ chốt/sửa ca của lần chạy đang chạy.',409)
@@ -321,13 +321,15 @@ def save_shift(db,user,identifier,data,edit_id=None):
     if not edit_id and boundary(items) and data.good_sheets+data.ng_sheets>0:
         fail('Một sản phẩm đã đủ: cập nhật kế hoạch/thành phần ghép trước khi tiếp tục cùng LSX.',409)
     cycles=data.good_sheets+data.ng_sheets
-    from app.modules.production.sample_service import gate
-    sample_basis=gate(db,identifier,run.machine_id,setup_id=data.setup_id or (previous.setup_id if previous else None),
-        start=start,end=end,line_ids=by_line,edit_id=edit_id,require_material=cycles>0)
-    if data.sample_qc_id and (data.sample_qc_id!=sample_basis['qc_id'] or data.sample_qc_version!=sample_basis['qc_version']):
-        fail('Phiếu mẫu căn cứ đã thay đổi; nạp lại trước khi lưu.',409)
-    if previous and (previous.shift_snapshot or {}).get('production_sample_v1')!=sample_basis:
-        fail('Không đổi phiếu mẫu căn cứ của nhật ký đã ghi; chưa hỗ trợ hồi tố nhật ký cũ thiếu căn cứ.',409)
+    sample_basis=(previous.shift_snapshot or {}).get('production_sample_v1') if previous else None
+    if require_sample:
+        from app.modules.production.sample_service import gate
+        sample_basis=gate(db,identifier,run.machine_id,setup_id=data.setup_id or (previous.setup_id if previous else None),
+            start=start,end=end,line_ids=by_line,edit_id=edit_id,require_material=cycles>0)
+        if data.sample_qc_id and (data.sample_qc_id!=sample_basis['qc_id'] or data.sample_qc_version!=sample_basis['qc_version']):
+            fail('Phiếu mẫu căn cứ đã thay đổi; nạp lại trước khi lưu.',409)
+        if previous and (previous.shift_snapshot or {}).get('production_sample_v1')!=sample_basis:
+            fail('Không đổi phiếu mẫu căn cứ của nhật ký đã ghi; chưa hỗ trợ hồi tố nhật ký cũ thiếu căn cứ.',409)
     if cycles and inspect(db.connection()).has_table('production_run_stops'):
         from app.modules.production.schedule_models import RunStop
         for stop in db.scalars(select(RunStop).where(RunStop.run_id==identifier,RunStop.enabled.is_(True),RunStop.started_at<end)):
@@ -369,7 +371,7 @@ def save_shift(db,user,identifier,data,edit_id=None):
     else:db.add(log)
     log.shift_start=start;log.shift_end=end;log.start_time=start.time();log.end_time=end.time();log.run_date=start.date()
     log.actual_machine_id=run.machine_id;log.assignment_id=assigned.id
-    if sample_basis:log.setup_id=sample_basis['setup_id']
+    log.setup_id=sample_basis['setup_id'] if sample_basis else data.setup_id
     log.good=data.good_sheets;log.ng=data.ng_sheets
     log.speed=D(data.seconds_per_cycle) if data.seconds_per_cycle is not None else None
     log.film_pull=D(data.pull_mm) if data.pull_mm is not None else None

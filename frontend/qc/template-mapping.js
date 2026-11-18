@@ -1,16 +1,17 @@
 (() => {
   const $=id=>document.getElementById(id), admin=window.QCTemplateAdmin;
   const el=(tag,text)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;return node;};
-  let fields=[], snapshot=null, sourceHash=null, sources={}, pick=null, epoch=0, dirty=false,signatureLocked=false;
+  let fields=[], snapshot=null, sourceHash=null, sources={}, pick=null, epoch=0, dirty=false,signatureLocked=false,loading=false,signatures=[];
   const frozen=()=>!!admin.selected()?.approved_at;
   function signatureMark(){
     const start=$('signatureCell').value.trim().toUpperCase(),end=$('signatureEndCell').value.trim().toUpperCase()||start;
     const area=snapshot&&window.QCSheetPreview.range(snapshot,start,end);
+    const areas=signatures.filter(s=>s.enabled&&s.cell).map(s=>window.QCSheetPreview.range(snapshot,s.cell,s.end_cell||s.cell)).filter(Boolean);if(!areas.length&&area)areas.push(area);
     for(const cell of $('mappingPreview').querySelectorAll('[data-cell]')){
       const box=window.QCSheetPreview.range(snapshot,cell.dataset.cell);
-      cell.classList.toggle('signature-range',!!(area&&box&&box.r0<area.r1&&box.r1>area.r0&&box.c0<area.c1&&box.c1>area.c0));
+      cell.classList.toggle('signature-range',!!(box&&areas.some(a=>box.r0<a.r1&&box.r1>a.r0&&box.c0<a.c1&&box.c1>a.c0)));
     }
-    $('mappingPreview').classList.toggle('signature-picking',!!pick?.signature&&!signatureLocked);
+    $('mappingPreview').classList.toggle('signature-picking',!!(pick?.signature||pick?.signatureEntry)&&!signatureLocked);
     if(!area){$('signatureRangeInfo').textContent=start?'Vùng chữ ký chưa hợp lệ.':'Chọn Ô đầu vùng chữ ký, rồi kéo trên preview để chọn toàn bộ vùng ký.';return;}
     const grid=snapshot.grid||{};
     let width=0,height=0;
@@ -24,14 +25,15 @@
     const nodes=$('mappingPreview').querySelectorAll('[data-cell]');
     for(const cell of nodes){cell.classList.remove('map-ERP','map-STANDARD','map-INPUT');cell.removeAttribute('title');}
     const byCell=new Map([...nodes].map(node=>[node.dataset.cell,node]));
-    for(const field of fields)for(const key of ['cell','standard_cell','assessment_cell','note_cell']){
+    for(const field of fields)for(const key of ['cell','standard_cell','assessment_cell','note_cell','method_cell']){
       const node=byCell.get(field[key]);
-      if(node){node.classList.add('map-'+(key==='standard_cell'?'STANDARD':field.kind));node.title=field.name+' · '+key;}
+      if(node){node.classList.add('map-'+(['standard_cell','method_cell'].includes(key)?'STANDARD':field.kind==='INFO'?'INPUT':field.kind));node.title=field.name+' · '+key;}
     }
     signatureMark();
   }
   function selectedCell(cell){
     if(admin.busy()||!pick)return;
+    if(pick.signatureEntry){const entry=signatures[pick.signatureEntry.index];entry[pick.signatureEntry.key]=cell;syncPrimary();dirty=true;renderSignatures();signatureMark();return;}
     if(pick.signature){if(signatureLocked)return;$(pick.signature).value=cell;dirty=true;signatureMark();$('mappingPick').textContent='Đã chọn '+cell+' cho vùng chữ ký.';return;}
     if(frozen())return;
     fields[pick.index][pick.key]=cell;fields[pick.index].reviewed=false;dirty=true;renderFields();mark();
@@ -39,8 +41,8 @@
   }
   function renderPreview(){
     if(snapshot)window.QCSheetPreview.render($('mappingPreview'),snapshot,{selectable:true,onSelect:selectedCell,
-      canSelectRange:()=>!!pick?.signature&&!signatureLocked&&!admin.busy(),
-      onRangeSelect:(start,end)=>{if(signatureLocked||admin.busy())return;$('signatureCell').value=start;$('signatureEndCell').value=end;dirty=true;signatureMark();$('mappingPick').textContent='Đã chọn vùng chữ ký '+start+':'+end+'.';}});
+      canSelectRange:()=>!!(pick?.signature||pick?.signatureEntry)&&!signatureLocked&&!admin.busy(),
+      onRangeSelect:(start,end)=>{if(signatureLocked||admin.busy())return;if(pick?.signatureEntry){const entry=signatures[pick.signatureEntry.index];entry.cell=start;entry.end_cell=end;syncPrimary();dirty=true;renderSignatures();signatureMark();return;}$('signatureCell').value=start;$('signatureEndCell').value=end;dirty=true;signatureMark();$('mappingPick').textContent='Đã chọn vùng chữ ký '+start+':'+end+'.';}});
     else $('mappingPreview').replaceChildren();
     mark();
   }
@@ -59,44 +61,64 @@
         for(const [value,label] of options){const option=el('option',label);option.value=value;node.append(option);}
         node.value=field[key]||'';node.onchange=()=>{
           field[key]=node.value;field.reviewed=false;dirty=true;
-          if(key==='kind') {field.source=null;field.standard_cell=null;field.assessment_cell=null;field.note_cell=null;field.allow_na=false;}
+          if(key==='kind') {field.source=null;field.standard_cell=null;field.assessment_cell=null;field.note_cell=null;field.method_cell=null;field.allow_na=false;}
           renderFields();mark();
         };return node;
       }
       function td(...nodes){const cell=el('td');cell.append(...nodes);tr.append(cell);}
       const name=input('name'),identifier=input('id');name.readOnly=identifier.readOnly=true;td(name,identifier);
-      const kind=select('kind',[['ERP','Tự điền MySQL'],['STANDARD','Tiêu chuẩn cố định'],['INPUT','Kết quả QC nhập']]);
+      const kind=select('kind',[['ERP','Tự điền MySQL'],['STANDARD','Tiêu chuẩn cố định'],['INPUT','Kết quả QC nhập'],['INFO','Thông tin người nhập']]);
       const source=select('source',[['','Chọn nguồn'],...Object.entries(sources)]);source.hidden=field.kind!=='ERP';td(kind,source);
-      for(const key of ['cell','standard_cell','assessment_cell','note_cell']){
+      for(const key of ['cell','standard_cell','assessment_cell','note_cell','method_cell']){
         const node=input(key);node.maxLength=5;node.placeholder='Chọn ô trên preview';
         node.onfocus=()=>{pick={index,key};signatureMark();$('mappingPick').textContent='Đang chọn '+key+' cho '+field.name+' — nhấn ô trên preview.';};
         node.hidden=key!=='cell'&&field.kind!=='INPUT';td(node);
       }
       td(select('data_type',[['text','Văn bản'],['number','Số'],['date','Ngày'],['boolean','Có / Không']]),input('unit'));
-      const required=el('label','Bắt buộc');required.prepend(input('required','checkbox'));
-      td(required,...(field.kind==='INPUT'?[el('span','Luôn có Không áp dụng')]:[]));
+      if(field.kind==='INPUT')td(el('span','Kết quả bắt buộc; NG cần ghi chú/xử lý'),el('small','Không áp dụng: không cần kết quả. Tiêu chuẩn và phương pháp tùy chọn.'));
+      else if(field.kind==='INFO'){const required=el('label','Bắt buộc thông tin');required.prepend(input('required','checkbox'));td(required);}
+      else td(el('span',field.kind==='STANDARD'?'Nội dung tham khảo; cho phép để trống trên phiếu':'Tự điền từ dữ liệu ERP'));
       return tr;
     }));
+    renderSignatures();
     const row=admin.selected();
     $('mappingStatus').textContent=row?.approved_at?'Đã phê duyệt '+row.approved_at+' · '+row.approved_by+' · '+row.status+' · Bất biến; thay đổi cần phiên bản mới.':'Kiểm tra mapping rồi Lưu để phê duyệt và kích hoạt ngay. Thay đổi trường/tiêu chí tại Google Sheets rồi tải lại.';
-    for(const id of ['suggestMapping','saveMapping'])$(id).disabled=frozen();
+    $('suggestMapping').disabled=frozen()||loading;$('saveMapping').disabled=frozen()||loading||!fields.length;
     $('activateTemplate').disabled=!frozen()||row?.status==='ACTIVE';
     $('signatureCell').disabled=$('signatureEndCell').disabled=signatureLocked;
     $('approveSignatureLocation').disabled=!frozen()||signatureLocked;
   }
-  async function load(){
-    const current=++epoch,row=admin.selected();pick=null;dirty=false;$('mappingPanel').hidden=!row;
-    if(!row)return;
-    try{
-      const data=await admin.api('/api/qc/templates/'+encodeURIComponent(row.id)+'/mapping');
-      if(current!==epoch)return;
-      admin.update(data);snapshot=data.snapshot;sourceHash=data.source_hash;sources=data.sources;
-      fields=(data.mapping?.fields||[]).map(clean);renderFields();renderPreview();$('mappingWarnings').textContent='';
-      $('signatureCell').value=data.mapping?.signature_cell||'';$('signatureEndCell').value=data.mapping?.signature_end_cell||'';
-      signatureLocked=!!data.mapping?.signature_cell;renderFields();signatureMark();
-    }catch(error){admin.message(error.message);}
+  const signatureLabels={technical:'Kỹ thuật',production_lead:'Tổ trưởng sản xuất',qc:'QC / Quản lý chất lượng'};
+  function syncPrimary(){const primary=signatures.find(s=>s.enabled&&s.role==='qc')||signatures.find(s=>s.enabled);if(primary){$('signatureCell').value=primary.cell||'';$('signatureEndCell').value=primary.end_cell||'';}}
+  function renderSignatures(){
+    const target=$('signatureRows');target.replaceChildren();
+    for(const role of Object.keys(signatureLabels)){
+      let index=signatures.findIndex(s=>s.role===role);if(index<0){index=signatures.length;signatures.push({role,cell:'',end_cell:'',enabled:false});}const entry=signatures[index],row=el('tr'),enabled=el('input');enabled.type='checkbox';enabled.checked=entry.enabled;enabled.disabled=frozen()||loading;
+      enabled.onchange=()=>{entry.enabled=enabled.checked;dirty=true;syncPrimary();signatureMark();};const label=el('td',signatureLabels[role]);label.prepend(enabled);row.append(label);
+      for(const key of ['cell','end_cell']){const input=el('input');input.value=entry[key]||'';input.maxLength=5;input.disabled=frozen()||loading;input.placeholder=key==='cell'?'Ô đầu':'Ô cuối';input.onfocus=()=>{pick={signatureEntry:{index,key}};};input.oninput=()=>{entry[key]=input.value.trim().toUpperCase();dirty=true;syncPrimary();signatureMark();};const td=el('td');td.append(input);row.append(td);}target.append(row);
+    }
   }
-  function clean(field){return Object.fromEntries(['id','name','kind','cell','source','data_type','unit','required','allow_na','standard_cell','assessment_cell','note_cell','reviewed'].map(key=>[key,field[key]??({unit:'',data_type:'text',required:true,allow_na:false,reviewed:false}[key]??null)]));}
+  async function load(){
+    const current=++epoch,row=admin.selected();pick=null;dirty=false;fields=[];snapshot=null;sourceHash=null;signatureLocked=false;signatures=[];loading=!!row;$('mappingPanel').hidden=!row;
+    if(!row)return;
+    $('signatureCell').value=$('signatureEndCell').value='';$('mappingWarnings').textContent='';renderFields();renderPreview();$('mappingStatus').textContent='Đang tải mapping…';
+    try{
+      let data=await admin.api('/api/qc/templates/'+encodeURIComponent(row.id)+'/mapping');
+      if(current!==epoch)return;
+      if(!data.approved_at&&!data.mapping?.fields?.length){
+        const suggested=await admin.api('/api/qc/templates/'+encodeURIComponent(row.id)+'/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_updated_at:data.updated_at})});
+        if(current!==epoch)return;
+        data={...data,mapping:{fields:suggested.fields,signatures:suggested.signatures||[]},snapshot:suggested.snapshot,source_hash:suggested.source_hash,sources:suggested.sources};
+        dirty=true;$('mappingWarnings').textContent=suggested.warnings.join(' ');
+      }
+      admin.update(data);snapshot=data.snapshot;sourceHash=data.source_hash;sources=data.sources;
+      fields=(data.mapping?.fields||[]).map(clean);
+      $('signatureCell').value=data.mapping?.signature_cell||'';$('signatureEndCell').value=data.mapping?.signature_end_cell||'';
+      signatures=(data.mapping?.signatures||[]).map(entry=>({...entry,enabled:true}));signatureLocked=frozen()&&!!data.mapping?.signature_cell;syncPrimary();renderPreview();signatureMark();$('mappingPanel').scrollIntoView({behavior:'smooth',block:'start'});
+    }catch(error){if(current===epoch)admin.message(error.message);}
+    finally{if(current===epoch){loading=false;renderFields();}}
+  }
+  function clean(field){return Object.fromEntries(['id','name','kind','cell','source','data_type','unit','required','allow_na','standard_cell','assessment_cell','note_cell','method_cell','reviewed'].map(key=>[key,field[key]??({unit:'',data_type:'text',required:true,allow_na:false,reviewed:false}[key]??null)]));}
   async function refreshAfter(action){
     const row=admin.selected(),data=await admin.api('/api/qc/templates/'+encodeURIComponent(row.id)+'/'+action.path,
       {method:action.method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_updated_at:row.updated_at,...action.body})});
@@ -106,12 +128,12 @@
     const data=await refreshAfter({path:'suggest'});
     // Suggestions do not modify the registered template until explicitly saved.
     snapshot=data.snapshot;sourceHash=data.source_hash;sources=data.sources;fields=data.fields.map(clean);dirty=true;
-    signatureLocked=false;$('signatureCell').value=$('signatureEndCell').value='';
-    renderFields();renderPreview();$('mappingWarnings').textContent=data.warnings.join(' ');
+    signatures=(data.signatures||[]).map(entry=>({...entry,enabled:true}));signatureLocked=false;$('signatureCell').value=$('signatureEndCell').value='';
+    syncPrimary();renderFields();renderPreview();$('mappingWarnings').textContent=data.warnings.join(' ');
     admin.message('Đã tải '+fields.length+' trường từ Google Sheets. Kiểm tra rồi Lưu để phê duyệt và kích hoạt.');
   });
   $('saveMapping').onclick=()=>{
-    const body={fields:structuredClone(fields),source_hash:sourceHash,
+    const body={fields:structuredClone(fields),source_hash:sourceHash,signatures:signatures.filter(s=>s.enabled).map(({role,cell,end_cell})=>({role,cell,end_cell:end_cell||null})),
       signature_cell:$('signatureCell').value.trim().toUpperCase()||null,signature_end_cell:$('signatureEndCell').value.trim().toUpperCase()||null};
     admin.work(async()=>{await refreshAfter({path:'mapping',method:'PUT',body});await load();admin.message('Đã lưu, phê duyệt và kích hoạt template.');});
   };

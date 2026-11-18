@@ -41,6 +41,8 @@
   function edit(row) {
     if (busy) return;
     selected = row; form.reset();
+    form.elements.object_type.querySelector('[data-legacy-setup]')?.remove();
+    if(row?.object_type==='SETUP'){const legacy=new Option('SETUP · dữ liệu cũ','SETUP');legacy.dataset.legacySetup='true';form.elements.object_type.append(legacy);}
     if (row) for (const key of ['form_code','form_name','check_type','object_type','product_id','version','status']) form.elements[key].value = row[key] ?? '';
     form.elements.spreadsheet.value = row?.spreadsheet_id || '';
     $('editorTitle').textContent = row ? 'Sửa template ' + row.form_code : 'Thêm template mới';
@@ -59,12 +61,12 @@
     $('templates').replaceChildren(...items.map(row => {
       const tr = element('tr');
       for (const value of [row.form_code + ' · v' + row.version,row.form_name,row.check_type,row.object_type || 'Tất cả',row.product_id || 'Áp dụng chung',row.spreadsheet_id,row.status]) tr.append(element('td', value));
-      const actions = element('td'), open = element('button','Sửa'), preview = element('button','Xem trước');
+      const actions = element('td'), open = element('button','Mở / xác nhận mapping'), preview = element('button','Xem trước');
       open.type = preview.type = 'button'; open.onclick = () => edit(row);
-      preview.onclick = () => work(async () => {
+      preview.onclick = () => {edit(row);work(async () => {
         clearPreview(); const data = await api('/api/qc/templates/' + encodeURIComponent(row.id) + '/preview');
         showPreview(data); message('Đã đọc template ' + row.form_code + '.');
-      });
+      });};
       actions.append(open, preview); tr.append(actions); return tr;
     }));
     $('listHint').textContent = items.length ? items.length + ' template trên trang này.' : 'Không có template phù hợp.';
@@ -106,7 +108,7 @@
       selected = row; $('editorTitle').textContent = 'Sửa template ' + row.form_code; $('save').textContent = 'Lưu thay đổi';
       await load(1, ''); $('query').value = '';
       window.dispatchEvent(new Event('qc-template-selected'));
-      message('Đã đăng ký ' + row.form_code + ' ở trạng thái ' + row.status + '. Tải mapping từ Google Sheets rồi Lưu để phê duyệt và kích hoạt.');
+      message('Đã đăng ký ' + row.form_code + ' ở trạng thái ' + row.status + '. Mapping mới sẽ tự đọc từ Google Sheets. Kiểm tra đề xuất rồi Lưu để phê duyệt và kích hoạt.');
     });
   };
   window.QCTemplateAdmin = {api, work, message, selected:()=>selected, busy:()=>busy,
@@ -117,7 +119,7 @@
       const prior=selected;edit(null);
       form.elements.form_code.value=prior.form_code.replace(/_V\d+$/, '')+'_V'+(prior.version+1);
       form.elements.version.value=prior.version+1;form.elements.form_name.value=prior.form_name;
-      form.elements.check_type.value=prior.check_type;form.elements.object_type.value=prior.object_type||'';
+      form.elements.check_type.value=prior.check_type;form.elements.object_type.value=prior.object_type==='SETUP'?'HUT':prior.object_type||'';
       form.elements.product_id.value=prior.product_id||'';
       message('Nhập Spreadsheet ID riêng cho phiên bản mới. Mapping và phê duyệt sẽ được thực hiện lại.');
     }};

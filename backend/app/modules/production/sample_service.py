@@ -102,8 +102,12 @@ def sources(db,run,setup,at=None):
 
 def validate_episode(db,setup,*,at=None,need_sources=True):
     run=runs.run_lock(db,setup.production_order_id);release.require_released(run)
-    if run.status==runs.ENDED and STAGES[setup.stage]=='forming':fail('LSX đã kết thúc định hình.',409)
+    if run.status==runs.ENDED and STAGES[setup.stage]=='forming' and not (setup.source or {}).get('forming_evidence_v1'):fail('LSX đã kết thúc định hình.',409)
     episode=info(setup);at=at or release.now()
+    if (setup.source or {}).get('forming_evidence_v1'):
+        # Evidence may be completed/signed after the recorded shift, including a closed episode.
+        # It never grants strict sample clearance (see gate).
+        return run,episode.get('received_sources_at_setup',[])
     if episode.get('closed_at') or at<stamp(episode['opened_at']) or at>=stamp(episode['valid_until']):
         fail('Đợt chạy đã đóng hoặc hết khoảng thực hiện; phải chạy mẫu lại.',409)
     machine=db.get(Machine,setup.machine_id)
@@ -154,12 +158,13 @@ def close_preceding(db,user,run_id,stage,line_ids,new_setup_id):
 def episode_record(db,setup):
     run=db.get(Run,setup.production_order_id)
     return {'id':setup.id,'run_id':setup.production_order_id,'official_code':run.official_code,
-        'machine_id':setup.machine_id,'stage':STAGES[setup.stage],**release.encoded(info(setup))}
+        'machine_id':setup.machine_id,'stage':STAGES[setup.stage],'evidence_only':bool((setup.source or {}).get('forming_evidence_v1')),**release.encoded(info(setup))}
 
 
 def template_entry(db,setup,check_type,template_id=None):
     values,products=runtime.context(db,'SETUP',setup.id,setup.production_order_id)
-    row=runtime.released(db,template_id,check_type,'SETUP',products,lock=True) if template_id else runtime.resolve_template(db,check_type,'SETUP',products)
+    kind='HUT' if (setup.source or {}).get('forming_evidence_v1') else 'SETUP'
+    row=runtime.released(db,template_id,check_type,kind,products,lock=True) if template_id else runtime.resolve_template(db,check_type,kind,products)
     if not row.field_mapping or not row.field_mapping.get('signature_cell'):fail('Template cần mapping và vị trí chữ ký QC đã duyệt.',422)
     values.update(machine_id=setup.machine_id,setup_id=setup.id,order_line_ids=', '.join(info(setup)['line_ids']))
     definition={'id':row.id,'code':row.form_code,'version':row.version,'name':row.form_name,
@@ -172,9 +177,14 @@ def template_entry(db,setup,check_type,template_id=None):
 def save(db,user,data,identifier=None):
     require(db,user,'QC_EDIT' if identifier else 'QC_CREATE')
     setup=setup_lock(db,data.setup_id);run,_=validate_episode(db,setup)
+    if data.journal_id:
+        journal=db.get(FormingLog,data.journal_id)
+        if journal and (journal.production_order_id!=run.id or journal.setup_id!=setup.id):fail('Nhật ký không thuộc LSX/đợt kiểm tra này.',409)
+        if not (setup.source or {}).get('forming_evidence_v1') and not journal:fail('Lưu nhật ký trước khi gắn phiếu cho đợt kiểm mẫu cũ.',409)
     obj=qc_lock(db,identifier,data.version) if identifier else None
     if obj:
         old=sample(obj)
+        if old.get('journal_id')!=data.journal_id:fail('Không đổi liên kết nhật ký của phiếu đã lưu.',409)
         if obj.object_id!=setup.id:fail('Không chuyển đợt chạy của phiếu đã lưu.')
         if old['state']!='draft' or old.get('signatures'):fail('Phiếu đã ký không sửa nội dung; hủy có kiểm soát và lập phiếu mới.',409)
         if data.version is None:fail('Cần version để sửa phiếu mẫu.',409)
@@ -188,6 +198,7 @@ def save(db,user,data,identifier=None):
     values.update(qc_id=obj.id,check_type=data.check_type,checked_at=release.now().isoformat(),quantity=str(data.quantity),
         staff_name=user.name,qc_note=data.note,conclusion='Đạt' if conclusion=='PASS' else 'Không đạt',
         decision=DECISIONS[data.decision],signer_name='',signed_at='')
+    values.update(mapping.assessment_summary(answers))
     auto={f['id']:str(values.get(f['source'],'')) for f in definition['mapping']['fields'] if f['kind']=='ERP'}
     missing=[f['name'] for f in definition['mapping']['fields'] if f['kind']=='ERP' and f['required'] and not auto[f['id']] and f['source'] not in {'signer_name','signed_at'}]
     if missing:fail('Thiếu dữ liệu ERP bắt buộc: '+', '.join(missing))
@@ -197,7 +208,7 @@ def save(db,user,data,identifier=None):
     obj.note=data.note;obj.standard_url='';obj.image_url='';obj.template_id=data.template_id
     obj.form_data={'kind':'google_template','template':definition,'context':values,'auto_values':auto,
         'input':{'answers':answers,'conclusion':conclusion,'signature':[]},
-        SAMPLE:{'version':version,'state':'draft','decision':data.decision,'signatures':{},
+        SAMPLE:{'version':version,'state':'draft','decision':data.decision,'signatures':{},'journal_id':data.journal_id,
             'episode_fingerprint':info(setup)['fingerprint'],'episode':deepcopy(info(setup)),
             'parent_folder_id':data.parent_folder_id}}
     audit(db,user,'PRODUCTION_SAMPLE_SAVE',obj.id,{'setup_id':setup.id,'version':version,'decision':data.decision})
@@ -205,7 +216,7 @@ def save(db,user,data,identifier=None):
 
 
 def require_role(db,user,role):
-    if role=='technical':require(db,user,'PRODUCTION_EDIT')
+    if role in {'technical','production_lead'}:require(db,user,'PRODUCTION_EDIT')
     else:
         from app.modules.qc.api import allowed
         allowed(db,user,'QC_CREATE','QC_EDIT')
@@ -221,6 +232,9 @@ def signable(db,user,obj,data):
     require_role(db,user,data.role)
     metadata=sample(obj)
     if metadata['state'] not in {'draft','signing'} or data.role in metadata['signatures']:fail('Phiếu đã hủy/đủ ký hoặc vai trò đã ký.',409)
+    roles=mapping.required_signers(obj.form_data['template']['mapping'])
+    if data.role not in roles:fail('Vai trò không thuộc các vị trí ký đã duyệt của template.',409)
+    if obj.form_data['template']['mapping'].get('signatures') and any(signature['proof']['user_id']==user.id for signature in metadata['signatures'].values()):fail('Mỗi vị trí xác nhận cần người ký khác nhau.',409)
     setup=setup_lock(db,obj.object_id);validate_episode(db,setup)
     if metadata['episode_fingerprint']!=info(setup)['fingerprint']:fail('Phiếu không khớp đợt chạy.',409)
     from types import SimpleNamespace
@@ -250,7 +264,7 @@ def sign(db,user,request,identifier,data):
     saved=deepcopy(obj.form_data);metadata=saved[SAMPLE]
     metadata['signatures'][data.role]={'strokes':data.model_dump(mode='json')['signature'],
         'proof':proof,'accepted_at':release.now().isoformat()}
-    metadata['version']+=1;metadata['state']='signed' if set(metadata['signatures'])=={'technical','qc'} else 'signing'
+    metadata['version']+=1;metadata['state']='signed' if set(metadata['signatures'])==set(mapping.required_signers(saved['template']['mapping'])) else 'signing'
     if metadata['state']=='signed':
         metadata['authorized_at']=release.now().isoformat()
         qc=metadata['signatures']['qc']
@@ -273,6 +287,8 @@ def sign(db,user,request,identifier,data):
 
 
 def linked_logs(db,obj):
+    journal_id=sample(obj).get('journal_id')
+    if journal_id and db.scalar(select(FormingLog.id).where(FormingLog.id==journal_id,FormingLog.setup_id==obj.object_id).limit(1)):return journal_id
     return (db.scalar(select(FormingLog.id).where(FormingLog.setup_id==obj.object_id,
         FormingLog.shift_snapshot[SAMPLE]['qc_id'].as_string()==obj.id).limit(1)) or
         db.scalar(select(CuttingLog.id).where(CuttingLog.setup_id==obj.object_id,
@@ -312,6 +328,8 @@ def gate(db,run_id,machine_id,stage='forming',setup_id=None,*,start=None,end=Non
     setup=db.get(Setup,setup_id) if setup_id else db.scalar(query.order_by(Setup.checked_at.desc(),Setup.source['run_version'].as_integer().desc(),Setup.id.desc()).limit(1))
     if not setup or setup.production_order_id!=run_id or setup.machine_id!=machine_id or STAGES.get(setup.stage)!=stage or not info(setup):
         fail('Cần mở đợt chạy và kiểm mẫu mới đúng LSX/máy/công đoạn.',409)
+    if (setup.source or {}).get('forming_evidence_v1'):
+        fail('Phiếu QC này là bằng chứng nhật ký, không dùng để mở khóa công đoạn khác.',409)
     # Closed episodes may be referenced when recording their past interval; never reopen them.
     episode=info(setup);moment=start or release.now()
     if end and episode.get('closed_at') and end>stamp(episode['closed_at']):fail('Nhật ký vượt thời điểm đóng đợt chạy.',409)
@@ -333,7 +351,7 @@ def gate(db,run_id,machine_id,stage='forming',setup_id=None,*,start=None,end=Non
     obj=next((q for q in candidates if sample(q)),None)
     if not obj:fail('Đợt chạy chưa có phiếu kiểm mẫu.',409)
     metadata=sample(obj)
-    if metadata['state']!='signed' or set(metadata['signatures'])!={'technical','qc'} or metadata['decision']=='stop':
+    if metadata['state']!='signed' or set(metadata['signatures'])!=set(mapping.required_signers(obj.form_data['template']['mapping'])) or metadata['decision']=='stop':
         fail('Phiếu mẫu chưa đủ xác nhận hoặc có quyết định Dừng chạy.',409)
     authorized=stamp(metadata['authorized_at'])
     if moment<authorized:fail('Không ghi chạy hàng loạt trước thời điểm đủ hai xác nhận.',409)

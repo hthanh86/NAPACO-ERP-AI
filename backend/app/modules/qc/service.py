@@ -17,7 +17,7 @@ from app.modules.qc import evidence, forms, drive_bundle
 from app.auth.models import User
 from app.core.performance import measure
 
-ALLOWED = {'QC NVL': {'NVL'}, 'QC ĐẦU CA': {'SETUP'},
+ALLOWED = {'QC NVL': {'NVL'}, 'QC ĐẦU CA': {'SETUP', 'HUT'},
            'QC GIỮA CA': {'SETUP', 'HUT', 'CAT', 'EB'}, 'QC CUỐI CA': {'SETUP', 'HUT', 'CAT', 'EB'}}
 MODELS = {'NVL': FilmReceipt, 'SETUP': ProductionSetup, 'HUT': FormingLog, 'CAT': CuttingLog, 'EB': EBLog}
 TIMEZONE = ZoneInfo('Asia/Ho_Chi_Minh')

@@ -80,6 +80,7 @@ def render(db,user,obj,token,progress=None):
         if progress:progress('restore_saved_template')
         with measure('sheets.restore_saved_template'):
             google_json(base+':batchUpdate',token=token,method='POST',body=json.dumps({'requests':restore_snapshot(snap,gid)}).encode(),headers={'Content-Type':'application/json'})
+    overrides={}
     values={};answers={a['id']:a for a in saved['input']['answers']}
     for field in layout['fields']:
         if field['kind']=='ERP':values[field['cell']]=saved['auto_values'].get(field['id'],'')
@@ -87,31 +88,43 @@ def render(db,user,obj,token,progress=None):
         else:
             answer=answers[field['id']]
             values[field['cell']]='Không áp dụng' if answer['assessment']=='NA' else answer['actual']+(' '+field['unit'] if answer['actual'] and field.get('unit') else '')
+            if field.get('standard_cell') and answer.get('standard') is not None:overrides[field['standard_cell']]=answer['standard']
+            if field.get('method_cell') and answer.get('method') is not None:overrides[field['method_cell']]=answer['method']
             if field.get('assessment_cell'):values[field['assessment_cell']]={'PASS':'Đạt','FAIL':'Không đạt','NA':'N/A',None:''}[answer['assessment']]
     for identifier,target in mapping.criterion_notes(snap,layout).items():
         values[target['cell']]=answers[identifier].get('note','')
+    values.update(overrides)
     requests=[]
     for cell,value in values.items():
         row,col=mapping.position(cell)
         requests.append({'updateCells':{'start':{'sheetId':gid,'rowIndex':row,'columnIndex':col},
             'rows':[{'values':[{'userEnteredValue':{'stringValue':str(value)}}]}],'fields':'userEnteredValue'}})
-    r0,c0,r1,c1=mapping.region(snap,layout['signature_cell'],layout.get('signature_end_cell'))
-    area={'sheetId':gid,'startRowIndex':r0,'endRowIndex':r1,'startColumnIndex':c0,'endColumnIndex':c1}
-    color_bytes=hashlib.sha256(saved['signer']['nonce'].encode()).digest()[:3]
-    marker=tuple((32+int(b)%190)/255 for b in color_bytes)
-    cell_format=mapping.cells(snap).get(layout['signature_cell'],{}).get('effectiveFormat',{})
-    bg=cell_format.get('backgroundColor',{})
-    style=cell_format.get('backgroundColorStyle',{})
-    if style.get('themeColor'):
-        bg=next((c.get('color',{}).get('rgbColor',{}) for c in snap.get('theme',{}).get('themeColors',[]) if c['colorType']==style['themeColor']),bg)
-    else:bg=style.get('rgbColor',bg)
-    has_background='backgroundColor' in cell_format or 'backgroundColorStyle' in cell_format
-    background=tuple(bg.get(k,0) for k in ['red','green','blue']) if bg or has_background else (1,1,1)
-    if r1-r0>1 or c1-c0>1:
-        requests.extend([{'unmergeCells':{'range':area}},{'mergeCells':{'range':area,'mergeType':'MERGE_ALL'}}])
-    requests.append({'repeatCell':{'range':area,'cell':{'userEnteredValue':{'stringValue':''},
-        'userEnteredFormat':{'backgroundColor':dict(zip(['red','green','blue'],marker))}},
-        'fields':'userEnteredValue,userEnteredFormat.backgroundColor'}})
+    overlays=[]
+    confirmations=(saved.get('production_sample_v1') or {}).get('signatures',{})
+    slots=mapping.signature_regions(layout)
+    for slot_index,slot in enumerate(slots):
+        signature=confirmations.get(slot['role'])
+        if signature:proof,strokes=signature['proof'],signature['strokes']
+        elif len(slots)==1:proof,strokes=saved['signer'],saved['input']['signature']
+        else:raise HTTPException(422,'Chưa đủ chữ ký theo các vùng đã duyệt trên template.')
+        r0,c0,r1,c1=mapping.region(snap,slot['cell'],slot.get('end_cell'))
+        area={'sheetId':gid,'startRowIndex':r0,'endRowIndex':r1,'startColumnIndex':c0,'endColumnIndex':c1}
+        color_bytes=hashlib.sha256((proof['nonce']+':'+str(slot_index)).encode()).digest()[:3]
+        marker=tuple((32+int(b)%190)/255 for b in color_bytes)
+        cell_format=mapping.cells(snap).get(slot['cell'],{}).get('effectiveFormat',{})
+        bg=cell_format.get('backgroundColor',{})
+        style=cell_format.get('backgroundColorStyle',{})
+        if style.get('themeColor'):
+            bg=next((c.get('color',{}).get('rgbColor',{}) for c in snap.get('theme',{}).get('themeColors',[]) if c['colorType']==style['themeColor']),bg)
+        else:bg=style.get('rgbColor',bg)
+        has_background='backgroundColor' in cell_format or 'backgroundColorStyle' in cell_format
+        background=tuple(bg.get(k,0) for k in ['red','green','blue']) if bg or has_background else (1,1,1)
+        if r1-r0>1 or c1-c0>1:
+            requests.extend([{'unmergeCells':{'range':area}},{'mergeCells':{'range':area,'mergeType':'MERGE_ALL'}}])
+        requests.append({'repeatCell':{'range':area,'cell':{'userEnteredValue':{'stringValue':''},
+            'userEnteredFormat':{'backgroundColor':dict(zip(['red','green','blue'],marker))}},
+            'fields':'userEnteredValue,userEnteredFormat.backgroundColor'}})
+        overlays.append((proof,strokes,marker,background))
     from app.modules.qc.sheets_layout import fit_content
     requests.extend(fit_content(snap,layout,values,gid))
     if progress:progress('mapping')
@@ -134,7 +147,10 @@ def render(db,user,obj,token,progress=None):
     content=export(token,temporary,gid,last_row,last_col)
     from app.modules.qc.pdf_signature import apply_signature
     if progress:progress('signature_pdf')
-    result=apply_signature(content,saved,marker,background)
+    result=content
+    for proof,strokes,marker,background in overlays:
+        signed={**saved,'signer':proof,'input':{**saved['input'],'signature':strokes}}
+        result=apply_signature(result,signed,marker,background)
     if saved.get('production_sample_v1'):
         from app.modules.qc.sample_pdf import append_confirmations
         result=append_confirmations(result,saved)

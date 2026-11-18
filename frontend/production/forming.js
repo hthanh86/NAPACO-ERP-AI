@@ -18,7 +18,7 @@
     const main=document.querySelector('main'),previousInert=main.inert;main.inert=true;
     try{await action();if($('message').textContent==='Đang xử lý…')$('message').textContent='Đã hoàn tất.';}
     catch(error){$('message').textContent=error.message;}
-    finally{busy=false;$('save').disabled=!!ctx&&!ctx.sample_basis&&!pendingSave;main.inert=previousInert;}
+    finally{busy=false;$('save').disabled=false;main.inert=previousInert;}
   }
   function kg(value){if(!/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value))throw Error('Kg phải là số không âm, tối đa 8 chữ số thập phân.');const [whole,part='']=value.split('.');return BigInt(whole)*100000000n+BigInt(part.padEnd(8,'0'));}
   function decimal(value){const negative=value<0n;if(negative)value=-value;return (negative?'-':'')+(value/100000000n).toString()+'.'+(value%100000000n).toString().padStart(8,'0');}
@@ -52,7 +52,7 @@
     $('entryInfo').textContent=`${ctx.machine.name} · ${ctx.status} · cùng LSX qua nhiều ngày/máy`;
     $('start').value=local(ctx.defaults.start);$('end').value=local(ctx.defaults.end);$('endNow').checked=!editing;
     $('goodSheets').value=ctx.journal?.good_sheets??'';$('ngSheets').value=ctx.journal?.ng_sheets??0;
-    const params=ctx.defaults.parameters;for(const [id,key]of [['actualSpeed','seconds_per_cycle'],['actualPull','pull_mm'],['actualWeight','sheet_weight_kg']])$(id).value=params[key]??'';
+    const params=ctx.defaults.parameters;for(const [id,key]of [['actualSpeed','seconds_per_cycle'],['actualPull','pull_mm'],['actualWeight','sheet_weight_kg']])$(id).value=params[key]==null?'':key==='sheet_weight_kg'?Number(params[key])*1000:params[key];
     $('pureMinutes').value=ctx.journal?.snapshot.pure_seconds==null?'':ctx.journal.snapshot.pure_seconds/60;
     $('setupMinutes').value=ctx.journal?.snapshot.setup_seconds==null?'':ctx.journal.snapshot.setup_seconds/60;
     $('note').value=ctx.journal?.snapshot.note||'';$('editReasonLabel').hidden=!editing;$('editReason').required=!!editing;
@@ -60,14 +60,16 @@
     renderEpisodes();renderItems();renderSources(false);renderContext();await loadSummary();$('entry').scrollIntoView({block:'start'});
   }
   function renderEpisodes(){
-    $('episode').replaceChildren();for(const episode of ctx.episodes.items){const option=node('option',`${episode.opened_at} → ${episode.valid_until}${episode.closed_at?' · Đã đóng':''}`);option.value=episode.id;$('episode').append(option);}
+    $('episode').replaceChildren();const empty=node('option','Đợt mới · tự tạo khi lưu / mở bằng chứng');empty.value='';$('episode').append(empty);for(const episode of ctx.episodes.items){const option=node('option',`${episode.opened_at}${episode.evidence_only?' · Bằng chứng nhật ký':' → '+episode.valid_until}${episode.closed_at?' · Đã đóng':''}`);option.value=episode.id;$('episode').append(option);}
     if(ctx.episode&&!ctx.episodes.items.some(e=>e.id===ctx.episode.id)){const option=node('option',ctx.episode.opened_at+' · '+ctx.episode.valid_until);option.value=ctx.episode.id;$('episode').append(option);}
     if(ctx.episode)$('episode').value=ctx.episode.id;$('episode').disabled=!!editId;
   }
   function renderContext(){
-    const basis=ctx.sample_basis;$('sampleInfo').textContent=basis?`${basis.qc_id} · ${basis.result} · ${decisions[basis.decision]} · đủ hai xác nhận`:(ctx.blocked_reason||'Chưa đủ điều kiện phiếu mẫu.');
+    const basis=ctx.sample_basis;$('sampleInfo').textContent=basis?`Phiếu căn cứ cũ: ${basis.qc_id} · ${basis.result}`:'';
     $('sampleLink').hidden=!basis;if(basis)$('sampleLink').href='/production/samples?qc_id='+encodeURIComponent(basis.qc_id);
-    const reference=ctx.reference_parameters;$('referenceInfo').textContent=`Chỉ tham khảo kế hoạch: ${reference.seconds_per_cycle??'—'} giây/chu kỳ; bước kéo ${reference.pull_mm??'—'} mm; ${reference.sheet_weight_kg??'—'} kg/bìa.`;
+    $('evidenceRows').replaceChildren();const labels={draft:'Đang nhập',signing:'Chưa đủ chữ ký',signed:'Đã đủ chữ ký',cancelled:'Đã hủy'};
+    for(const evidence of (ctx.qc_evidence||[]).filter(e=>e.journal_id===draftId)){const row=node('p',`${evidence.check_type} · ${evidence.result} · ${labels[evidence.state]||evidence.state} · Kỹ thuật: ${evidence.signatures.includes('technical')?'đã ký':'chưa ký'} · QC: ${evidence.signatures.includes('qc')?'đã ký':'chưa ký'}`);if(evidence.signatures.includes('production_lead'))row.append(node('span',' · Tổ trưởng: đã ký'));row.dataset.qcState=evidence.result==='NG'?'ng':evidence.state;row.append(button('▤ Mở phiếu',()=>showEvidence({qc_id:evidence.id})));$('evidenceRows').append(row);}
+    const reference=ctx.reference_parameters;$('referenceInfo').textContent=`Chỉ tham khảo kế hoạch: ${reference.seconds_per_cycle??'—'} giây/chu kỳ; bước kéo ${reference.pull_mm??'—'} mm; ${reference.sheet_weight_kg==null?'—':number(Number(reference.sheet_weight_kg)*1000)} gram/bìa.`;
     const weekday=(new Date($('start').value.slice(0,10)+'T12:00:00Z').getUTCDay()+6)%7,rule=ctx.calendar.weekly[String(weekday)]||{};
     $('calendarInfo').textContent='Nghỉ theo cấu hình: '+((rule.breaks||[]).map(p=>p.start+'–'+p.end).join(', ')||'chưa có khung nghỉ')+'. Không tự tách nhật ký; thời gian chạy thuần chỉ ghi khi có số thực tế.';
     const pending=ctx.lots.filter(l=>Number(l.pending_handover_kg)>0);
@@ -79,7 +81,7 @@
     itemInputs=[];$('itemRows').replaceChildren();const count=new Map();for(const item of ctx.items)count.set(item.product_id,(count.get(item.product_id)||0)+1);
     for(const item of ctx.items){const saved=ctx.journal?.items.find(i=>i.order_line_id===item.order_line_id),row=node('tr'),good=quantityInput(saved?.good??'',item.order_line_id+' tốt'),ng=quantityInput(saved?.ng??0,item.order_line_id+' NG');
       const entry={item,good,ng,auto:!saved&&count.get(item.product_id)===1};good.oninput=ng.oninput=()=>{entry.auto=false;renderCycles();};
-      row.append(node('td',item.order_line_id+' · '+item.name),node('td',`${item.cavity} · còn ${number(item.remaining_qty)}`));for(const input of [good,ng]){const td=node('td');td.append(input);row.append(td);}$('itemRows').append(row);itemInputs.push(entry);}
+      row.append(node('td',item.order_line_id+' · '+item.name),node('td',number(item.planned_qty)),node('td',`${item.cavity} cavity · đã chạy ${number(item.completed_qty)} · còn ${number(item.remaining_qty)}`));for(const input of [good,ng]){const td=node('td');td.append(input);row.append(td);}$('itemRows').append(row);itemInputs.push(entry);}
   }
   function renderCycles(){
     const good=Number($('goodSheets').value||0),ng=Number($('ngSheets').value||0);$('cyclesInfo').textContent=`Tổng ${number(good+ng)} bìa/chu kỳ; thời gian máy chỉ tính một lần cho LSX ghép.`;
@@ -87,6 +89,7 @@
   }
   function renderSources(preserve=true){
     const old=new Map(sourceInputs.map(s=>[s.source.receipt_id,s.input.value]));sourceInputs=[];$('sourceRows').replaceChildren();const mode=$('materialMode').value;
+    for(const tab of document.querySelectorAll('[data-material-mode]'))tab.setAttribute('aria-selected',String(tab.dataset.materialMode===mode));
     $('materialHeading').textContent=mode==='closing'?'Kg cuối kỳ':'Kg tiêu hao';$('derivedHeading').textContent=mode==='closing'?'Tiêu hao tính lại':'Cuối kỳ tính lại';
     for(const source of ctx.sources){const row=node('tr'),input=node('input'),derived=node('td');input.type='number';input.min='0';input.step='0.00000001';input.required=true;input.setAttribute('aria-label',source.receipt_id+(mode==='closing'?' kg cuối kỳ':' kg tiêu hao'));
       const saved=ctx.journal?.sources.find(s=>s.receipt_id===source.receipt_id);input.value=preserve?(old.get(source.receipt_id)??''):(saved?.[mode==='closing'?'closing_kg':'consumed_kg']??'');
@@ -96,9 +99,9 @@
       input.oninput=reflect;reflect();sourceInputs.push({source,input});}
     if(!ctx.sources.length)$('sourceRows').append(node('tr','Chưa có nguồn NVL đã ký nhận còn được sử dụng.'));
   }
-  async function refreshContext(){
+  async function refreshContext(acceptRunChange=false){
     if(!runId)throw Error('Chọn LSX trước.');const old=ctx,updated=await api(contextPath(runId,$('episode').value,editId,true));
-    if(updated.assignment_id!==old.assignment_id||updated.run_version!==old.run_version)throw Error('LSX/phân công đã đổi. Đóng màn hình nhập rồi chọn lại; giữ số kiểm đếm của bạn để đối chiếu.');
+    if(updated.assignment_id!==old.assignment_id||(!acceptRunChange&&updated.run_version!==old.run_version))throw Error('LSX/phân công đã đổi. Đóng màn hình nhập rồi chọn lại; giữ số kiểm đếm của bạn để đối chiếu.');
     ctx=updated;renderSources(true);renderContext();return old.source_hash!==updated.source_hash||old.sample_basis?.qc_id!==updated.sample_basis?.qc_id||old.sample_basis?.qc_version!==updated.sample_basis?.qc_version||old.episode?.version!==updated.episode?.version;
   }
   async function loadSummary(){if(!runId)return;const data=await api('forming/runs/'+encodeURIComponent(runId)+'/summary');$('summary').hidden=false;
@@ -111,16 +114,15 @@
     if($('endNow').checked)$('end').value=now();
     if(!$('entryForm').reportValidity())return;
     if(await refreshContext())throw Error('Nguồn/phiếu mẫu/đợt đã thay đổi. Dữ liệu đã nạp lại; kiểm tra các số thực tế rồi nhấn Lưu lần nữa.');
-    if(!ctx.sample_basis)throw Error(ctx.blocked_reason||'Chưa đủ xác nhận kiểm mẫu.');
     if(ctx.reconciliation_only&&(Number($('goodSheets').value)||Number($('ngSheets').value)))throw Error('NVL đã trả/chuyển hết; nhật ký này chỉ dùng đối soát, sản lượng phải bằng 0.');
     for(const source of sourceInputs)if(kg(source.input.value)>available(source.source))throw Error(source.source.receipt_id+': số kiểm đếm/tiêu hao vượt lượng có thể sử dụng.');
     const optional=id=>$(id).value===''?null:Number($(id).value);
     const payload={id:draftId,run_version:ctx.run_version,version:ctx.journal?.version??null,machine_id:ctx.machine.id,assignment_id:ctx.assignment_id,
-      setup_id:ctx.episode.id,episode_version:ctx.episode.version,sample_qc_id:ctx.sample_basis.qc_id,sample_qc_version:ctx.sample_basis.qc_version,source_hash:ctx.source_hash,
+      setup_id:ctx.episode?.id||null,episode_version:ctx.episode?.version||null,sample_qc_id:ctx.sample_basis?.qc_id||null,sample_qc_version:ctx.sample_basis?.qc_version||null,source_hash:ctx.source_hash,
       start:zoned($('start').value),end:zoned($('end').value),good_sheets:Number($('goodSheets').value),ng_sheets:Number($('ngSheets').value),
       items:itemInputs.map(i=>({order_line_id:i.item.order_line_id,good:Number(i.good.value),ng:Number(i.ng.value)})),
       sources:sourceInputs.map(s=>({receipt_id:s.source.receipt_id,consumed_kg:$('materialMode').value==='consumed'?s.input.value:null,closing_kg:$('materialMode').value==='closing'?s.input.value:null})),
-      seconds_per_cycle:optional('actualSpeed'),pull_mm:optional('actualPull'),sheet_weight_kg:optional('actualWeight'),
+      seconds_per_cycle:optional('actualSpeed'),pull_mm:optional('actualPull'),sheet_weight_kg:optional('actualWeight')==null?null:optional('actualWeight')/1000,
       pure_seconds:optional('pureMinutes')==null?null:optional('pureMinutes')*60,setup_seconds:optional('setupMinutes')==null?null:optional('setupMinutes')*60,
       note:$('note').value,episode_action:$('episodeAction').value,edit_reason:$('editReason').value};
     pendingSave={payload,key:crypto.randomUUID(),runId,editId};await submit(pendingSave);
@@ -129,7 +131,7 @@
     const path='forming/runs/'+encodeURIComponent(request.runId)+'/logs'+(request.editId?'/'+encodeURIComponent(request.editId):'');let result;
     try{result=await api(path,{method:request.editId?'PUT':'POST',headers:{'Content-Type':'application/json','Idempotency-Key':request.key},body:JSON.stringify(request.payload)});}
     catch(error){if(error.status&&error.status<500)pendingSave=null;throw Error(error.message+' · Nếu mất kết nối, nhấn Lưu để gửi lại đúng thao tác; sửa ô nhập sẽ tạo yêu cầu mới.');}
-    pendingSave=null;ctx=null;$('entry').hidden=true;$('message').textContent=`Đã lưu nhật ký · ${result.official_code}. ${request.payload.episode_action==='close'?'Đợt đã kết thúc; chạy lại cần phiếu mẫu mới.':'LSX tiếp tục; nghỉ trong đợt không bắt buộc kiểm mẫu lại.'}`;
+    pendingSave=null;ctx=null;$('entry').hidden=true;$('message').textContent=`Đã lưu nhật ký · ${result.official_code}. ${request.payload.episode_action==='close'?'Đợt đã kết thúc. Lần chạy tiếp theo có bộ bằng chứng QC riêng.':'LSX tiếp tục. Có thể bổ sung bằng chứng QC ngay trên nhật ký.'}`;
     historyPage=1;const refreshed=await Promise.allSettled([loadSummary(),loadWork(),loadHistory()]);
     if(refreshed.some(result=>result.status==='rejected'))$('message').textContent+=' Nhật ký đã được ghi; một số bảng chưa tải lại được, hãy Tra cứu lại.';
   }
@@ -141,10 +143,11 @@
     for(const row of data.items){const card=node('div',`${row.official_code||'LSX cũ'} · ${row.machine_id||'Chưa rõ máy'} · ${local(row.shift_start)} → ${local(row.shift_end)} · tốt ${number(row.good)} / NG ${number(row.ng)} · ${row.sample_qc_id||'Chưa có căn cứ mẫu mới'}`);card.className='history-card';card.append(button('Xem nhật ký',()=>openJournal(row.id)));$('historyRows').append(card);}
     $('historyPage').textContent=`Trang ${historyPage} · ${historyTotal} nhật ký`;$('historyPrev').disabled=historyPage<=1;$('historyNext').disabled=historyPage*25>=historyTotal;
   }
-  async function openJournal(id){journal=await api('shifts/'+encodeURIComponent(id));const box=$('journalInfo');box.replaceChildren(node('p',`${journal.official_code||'LSX cũ'} · ${journal.actual_machine_id||'Chưa rõ máy'} · ${local(journal.start)} → ${local(journal.end)}`),node('p','Phiếu mẫu: '+(journal.sample_basis?.qc_id||'Lịch sử chưa có căn cứ mới')));
+  async function openJournal(id){journal=await api('shifts/'+encodeURIComponent(id));const box=$('journalInfo');box.replaceChildren(node('p',`${journal.official_code||'LSX cũ'} · ${journal.actual_machine_id||'Chưa rõ máy'} · ${local(journal.start)} → ${local(journal.end)}`),node('p',journal.snapshot.forming_entry_v1?.qc_policy==='evidence_optional'?'Bằng chứng QC theo riêng nhật ký này — mở Đầu ca / Giữa ca / Cuối ca bên dưới.':'Phiếu mẫu: '+(journal.sample_basis?.qc_id||'Lịch sử chưa có căn cứ mới')));
     for(const item of journal.items)box.append(node('p',`${item.order_line_id}: tốt ${number(item.good)}, NG ${number(item.ng)}`));
     for(const source of journal.sources)box.append(node('p',`${source.receipt_id}: ${source.opening_kg} + ${source.input_kg} − ${source.output_kg} − ${source.consumed_kg} = ${source.closing_kg} kg`));
-    $('editJournal').disabled=!journal.sample_basis;$('journal').showModal();}
+    if(journal.setup_id){for(const check_type of ['QC ĐẦU CA','QC GIỮA CA','QC CUỐI CA'])box.append(button('▤ '+check_type,()=>showEvidence({setup_id:journal.setup_id,check_type,journal_id:journal.id})));}
+    $('editJournal').disabled=!journal.sample_basis&&!journal.snapshot.forming_entry_v1;$('journal').showModal();}
   $('machineSearch').onsubmit=e=>{e.preventDefault();work(machines);};
   $('machine').onchange=()=>work(async()=>{ctx=null;runId=null;editId=null;pendingSave=null;$('entry').hidden=true;$('summary').hidden=true;workPage=1;historyPage=1;historyTotal=0;$('historyByRun').checked=false;$('historyRows').replaceChildren();$('historyPage').textContent='Bấm Tra cứu để xem nhật ký của máy đã chọn.';$('historyPrev').disabled=$('historyNext').disabled=true;await loadWork();});
   $('refreshWork').onclick=()=>work(loadWork);$('workPrev').onclick=()=>work(async()=>{if(workPage>1){workPage--;await loadWork();}});$('workNext').onclick=()=>work(async()=>{if(workPage*100<workTotal){workPage++;await loadWork();}});
@@ -152,7 +155,11 @@
   $('end').oninput=()=>{$('endNow').checked=false;};$('start').onchange=()=>{if(ctx)renderContext();};
   $('refreshSources').onclick=()=>work(async()=>{pendingSave=null;if($('endNow').checked)$('end').value=now();await refreshContext();});
   $('episode').onchange=()=>work(async()=>{const selected=await api(contextPath(runId,$('episode').value));ctx=selected;renderSources(true);renderContext();});
-  $('materialMode').onchange=()=>{for(const source of sourceInputs)if(source.input.value!==''){try{source.input.value=decimal(available(source.source)-kg(source.input.value));}catch{source.input.value='';}}renderSources(true);};
+  for(const tab of document.querySelectorAll('[data-material-mode]'))tab.onclick=()=>{const mode=tab.dataset.materialMode;if($('materialMode').value===mode)return;for(const source of sourceInputs)if(source.input.value!==''){try{source.input.value=decimal(available(source.source)-kg(source.input.value));}catch{source.input.value='';}}$('materialMode').value=mode;for(const other of document.querySelectorAll('[data-material-mode]'))other.setAttribute('aria-selected',String(other===tab));pendingSave=null;if(ctx)renderSources(true);};
+  function showEvidence(params){const query=new URLSearchParams({...params,embed:'1'});$('evidenceFrame').src='/production/samples?'+query;$('evidenceDialog').showModal();}
+  let evidenceRequest=null;
+  for(const control of document.querySelectorAll('[data-evidence]'))control.onclick=()=>work(async()=>{if(!ctx)return;const payload={run_version:ctx.run_version,machine_id:ctx.machine.id,assignment_id:ctx.assignment_id,setup_id:ctx.episode?.id||null};const fingerprint=JSON.stringify(payload);if(!evidenceRequest||evidenceRequest.fingerprint!==fingerprint)evidenceRequest={fingerprint,key:crypto.randomUUID()};const data=await api('forming/runs/'+encodeURIComponent(runId)+'/evidence-context',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':evidenceRequest.key},body:JSON.stringify(payload)});evidenceRequest=null;const updated=await api(contextPath(runId,data.setup_id,editId));if(updated.assignment_id!==ctx.assignment_id)throw Error('Phân công máy đã đổi; chọn lại LSX.');ctx=updated;pendingSave=null;renderEpisodes();renderContext();showEvidence({setup_id:data.setup_id,check_type:control.dataset.evidence,journal_id:draftId});});
+  $('closeEvidence').onclick=()=>$('evidenceDialog').close();$('evidenceDialog').addEventListener('close',()=>{ $('evidenceFrame').src='about:blank';if(ctx)work(async()=>{pendingSave=null;await refreshContext(true);renderEpisodes();});});
   $('entryForm').onsubmit=e=>{e.preventDefault();work(save);};$('entryForm').addEventListener('input',()=>{pendingSave=null;});
   $('cancelEntry').onclick=()=>{$('entry').hidden=true;ctx=null;pendingSave=null;};
   $('historySearch').onsubmit=e=>{e.preventDefault();historyPage=1;work(loadHistory);};$('historyPrev').onclick=()=>work(async()=>{if(historyPage>1){historyPage--;await loadHistory();}});$('historyNext').onclick=()=>work(async()=>{if(historyPage*25<historyTotal){historyPage++;await loadHistory();}});

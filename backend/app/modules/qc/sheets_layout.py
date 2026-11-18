@@ -45,14 +45,13 @@ def fit_content(snapshot,layout,values,gid):
     widths=[0 if metadata('columnMetadata',c,c_start).get('hiddenByUser') else metadata('columnMetadata',c,c_start).get('pixelSize',100) for c in range(snapshot['column_count'])]
     cells=mapping.cells(snapshot);content={cell:data.get('formattedValue','') for cell,data in cells.items()}
     content.update(values)
-    signature=mapping.region(snapshot,layout['signature_cell'],layout.get('signature_end_cell'))
+    signatures=[mapping.region(snapshot,s['cell'],s.get('end_cell')) for s in mapping.signature_regions(layout)]
     requests=[]
     for cell,text in content.items():
         if not str(text):continue
         if mapping.anchor(snapshot,cell)!=cell:continue
         r0,c0,r1,c1=mapping.region(snapshot,cell)
-        a,b,x,y=signature
-        if r0<x and r1>a and c0<y and c1>b:continue
+        if any(r0<x and r1>a and c0<y and c1>b for a,b,x,y in signatures):continue
         visible=[r for r in range(r0,r1) if r not in hidden_rows]
         if not visible:continue
         fmt=cells.get(cell,{}).get('effectiveFormat') or {}

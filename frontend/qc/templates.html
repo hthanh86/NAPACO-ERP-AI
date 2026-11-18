@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="/static/auth/users.css"><link rel="stylesheet" href="/static/shared/navigation.css?v=fixed-rail-14">
 <link rel="stylesheet" href="/static/qc/qc.css"><link rel="stylesheet" href="/static/qc/templates.css">
 <script defer src="/static/shared/navigation.js?v=fixed-rail-14"></script><script defer src="/static/qc/sheet-preview.js"></script>
-<script defer src="/static/qc/templates.js"></script><script defer src="/static/qc/template-mapping.js"></script></head>
+<script defer src="/static/qc/templates.js?v=required-ng-notes-7"></script><script defer src="/static/qc/template-mapping.js?v=required-ng-notes-7"></script></head>
 <body><div id="templateBusy" class="template-busy" role="status" aria-live="polite" hidden></div><main><h1>Quản lý Template QC</h1>
 <p>Đăng ký Google Sheets, kiểm tra mapping rồi Lưu để phê duyệt và kích hoạt phiên bản dùng khi Tạo Phiếu QC.</p>
 <div id="message" role="status" aria-live="polite"></div>
@@ -18,7 +18,7 @@
 <label>Mã template<input name="form_code" value="QC_NVL_V1" maxlength="100" pattern="[A-Z][A-Z0-9_]{0,99}" required></label>
 <label>Tên biểu mẫu<input name="form_name" value="Kiểm tra chất lượng nguyên vật liệu" maxlength="300" required></label>
 <label>CHECK_TYPE<select name="check_type"><option>QC NVL</option><option>QC ĐẦU CA</option><option>QC GIỮA CA</option><option>QC CUỐI CA</option></select></label>
-<label>OBJECT_TYPE (tùy chọn)<select name="object_type"><option value="">Tất cả đối tượng phù hợp</option><option>NVL</option><option>SETUP</option><option>HUT</option><option>CAT</option><option>EB</option></select></label>
+<label>OBJECT_TYPE (tùy chọn)<select name="object_type"><option value="">Tất cả đối tượng phù hợp</option><option>NVL</option><option>HUT</option><option>CAT</option><option>EB</option></select></label>
 <label>Mã sản phẩm (tùy chọn)<input name="product_id" maxlength="100" placeholder="Để trống: áp dụng chung"></label>
 <label>Phiên bản<input name="version" type="number" min="1" max="2147483647" value="1" required></label>
 <label>Trạng thái<select name="status"><option>DRAFT</option><option>INACTIVE</option><option value="ACTIVE" disabled>ACTIVE · tự bật khi lưu mapping</option></select></label>
@@ -31,11 +31,11 @@
 <div id="sheetPreview" class="sheet-preview" tabindex="0" aria-label="Bảng xem trước Google Sheets chỉ đọc"></div></section>
 <section id="mappingPanel" hidden><h2>Mapping và phê duyệt</h2><p id="mappingStatus" role="status"></p>
 <div class="actions"><button type="button" id="suggestMapping">Tải lại từ Google Sheets</button><button type="button" id="saveMapping">Lưu · Phê duyệt và kích hoạt</button><button type="button" id="activateTemplate">Kích hoạt lại</button><button type="button" id="deactivateTemplate">Ngừng kích hoạt</button><button type="button" id="verifyTemplate">Kiểm tra thay đổi nguồn</button><button type="button" id="newVersion">Tạo phiên bản mới</button></div>
-<div class="actions"><label>Ô đầu vùng chữ ký<input id="signatureCell" maxlength="5" placeholder="Chọn ô trên preview"></label><label>Ô cuối vùng chữ ký (nếu nhiều ô)<input id="signatureEndCell" maxlength="5" placeholder="Ví dụ C29"></label><button id="approveSignatureLocation" type="button">Phê duyệt bổ sung vùng chữ ký</button></div>
-<p id="signatureRangeInfo" role="status" aria-live="polite"></p>
-<p>Chọn một vùng trống đủ lớn cho chữ ký và họ tên, không đè kết quả hay tiêu chuẩn. Mẫu đã duyệt có thể bổ sung vị trí ký một lần; đổi vị trí sau đó cần phiên bản mới. Phê duyệt bổ sung không thay mapping các trường đã có.</p>
+<div class="actions"><label>Ô đầu vùng chữ ký<input id="signatureCell" maxlength="5" placeholder="Chọn ô trên preview"></label><label>Ô cuối vùng chữ ký (nếu nhiều ô)<input id="signatureEndCell" maxlength="5" placeholder="Ví dụ C29"></label><button id="approveSignatureLocation" type="button">Bổ sung vùng ký còn thiếu</button></div>
+<table><thead><tr><th>Vai trò ký / sử dụng</th><th>Ô đầu vùng ký</th><th>Ô cuối vùng ký</th></tr></thead><tbody id="signatureRows"></tbody></table><p>Bật 2–3 vai trò cần ký, chọn từng vùng trên preview. Mỗi vai trò phải có vùng riêng; vị trí gợi ý chưa được duyệt cho đến khi bấm Lưu mapping.</p><p id="signatureRangeInfo" role="status" aria-live="polite"></p>
+<p>Hai ô vùng ký phía trên dùng cho template một chữ ký cũ. Phiếu sản phẩm có thể cấu hình nhiều vai trò ở bảng bên dưới; IQC giữ cơ chế một chữ ký QC hiện có. Chọn một vùng trống đủ lớn cho chữ ký và họ tên, không đè kết quả hay tiêu chuẩn. Mẫu đã duyệt có thể bổ sung vị trí ký một lần; đổi vị trí sau đó cần phiên bản mới. Phê duyệt bổ sung không thay mapping các trường đã có.</p>
 <p>Trường và tiêu chí lấy từ Google Sheets; sửa trên Google Sheets rồi tải lại, không thêm hoặc xóa trường tại ERP. Chọn ô địa chỉ trong bảng mapping rồi nhấn trực tiếp ô trên preview để chỉnh vị trí. Nhấn Lưu là xác nhận mapping, phê duyệt và kích hoạt template trong một lần.</p>
 <p id="mappingWarnings"></p><p id="mappingPick" role="status"></p>
 <div id="mappingPreview" class="sheet-preview" tabindex="0" aria-label="Chọn ô để mapping"></div>
-<div class="table-wrap"><table class="mapping-fields"><thead><tr><th>Tên trường / mã từ template</th><th>Loại / nguồn ERP</th><th>Ô kết quả / dữ liệu</th><th>Ô tiêu chuẩn</th><th>Ô đánh giá</th><th>Ô ghi chú</th><th>Kiểu / đơn vị</th><th>Cấu hình</th></tr></thead><tbody id="mappingFields"></tbody></table></div></section>
+<div class="table-wrap"><table class="mapping-fields"><thead><tr><th>Tên trường / mã từ template</th><th>Loại / nguồn ERP</th><th>Ô kết quả / dữ liệu</th><th>Ô tiêu chuẩn</th><th>Ô đánh giá</th><th>Ô ghi chú</th><th>Ô phương pháp</th><th>Kiểu / đơn vị</th><th>Cấu hình</th></tr></thead><tbody id="mappingFields"></tbody></table></div></section>
 </main></body></html>

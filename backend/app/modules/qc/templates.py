@@ -208,7 +208,7 @@ def save_mapping(identifier: str, data: MappingSave, user=Depends(manager), db=D
         raise HTTPException(409, 'Nguồn Google đã thay đổi. Đọc lại và kiểm tra mapping trước khi lưu.')
     # Saving is the manager's explicit approval; suggestions alone never release a template.
     reviewed = mapping.MappingInput(fields=[field.model_copy(update={'reviewed':True}) for field in data.fields],
-        signature_cell=data.signature_cell,signature_end_cell=data.signature_end_cell)
+        signature_cell=data.signature_cell,signature_end_cell=data.signature_end_cell,signatures=data.signatures)
     with measure('qc.template.mapping.validate', fields=len(data.fields)):
         validated = mapping.validate(source, reviewed, row.check_type, approve=True)
     row = template(db, identifier, data.expected_updated_at, lock=True)

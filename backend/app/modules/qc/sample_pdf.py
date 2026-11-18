@@ -14,8 +14,10 @@ from app.modules.qc.pdf import Signature
 def append_confirmations(content,saved):
     from app.modules.production.sample_service import SAMPLE,DECISIONS
     sample=saved[SAMPLE]
-    if sample['state']!='signed' or set(sample['signatures'])!={'technical','qc'}:
-        raise HTTPException(409,'Chỉ xuất phiếu mẫu đủ hai xác nhận; phiếu hủy không được xuất bản dùng chạy.')
+    from app.modules.qc.mapping import required_signers
+    roles=required_signers(saved['template']['mapping'])
+    if sample['state']!='signed' or set(sample['signatures'])!=set(roles):
+        raise HTTPException(409,'Chỉ xuất phiếu đủ các xác nhận theo template; phiếu hủy không được xuất.')
     if 'QC-Sample' not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(TTFont('QC-Sample','/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
     style=ParagraphStyle('SampleProof',fontName='QC-Sample',fontSize=10,leading=15,spaceAfter=6)
@@ -26,7 +28,8 @@ def append_confirmations(content,saved):
         p('CTĐH: '+context['order_line_ids']),p('Đợt chạy: '+context['setup_id']),
         p('Kết luận: '+context['conclusion']+' · Quyết định: '+DECISIONS[sample['decision']]),
         p('Nội dung / phương án xử lý: '+context['qc_note']),Spacer(1,12)]
-    for role,label in [('technical','KỸ THUẬT XÁC NHẬN'),('qc','QC XÁC NHẬN')]:
+    for role in roles:
+        label={'technical':'KỸ THUẬT XÁC NHẬN','production_lead':'TỔ TRƯỞNG SẢN XUẤT XÁC NHẬN','qc':'QC XÁC NHẬN'}[role]
         entry=sample['signatures'][role];proof=entry['proof']
         story.append(KeepTogether([p(label),Signature(entry['strokes']),
             p(proof['name']+' · '+proof['email']),p('Ký lúc UTC: '+proof['signed_at']),

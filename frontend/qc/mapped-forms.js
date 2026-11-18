@@ -55,6 +55,7 @@
   }
   function edit(){
     if(!entry)return;
+    if(!record&&(entry.mapping.signatures||[]).length>1){$('mappedSummary').textContent='Template này có nhiều người ký. Vào Nhật ký định hình → Bằng chứng QC để lập và ký từng vai trò.';return;}
     const readonly=!!record&&recordReadonly,auto=automatic(),modal=el('dialog');modal.className='qc-dialog mapped-dialog';
     const close=el('button','Đóng');close.type='button';close.onclick=()=>modal.close();
     modal.append(el('h2',entry.name+' · '+entry.code+' · v'+entry.version),close);
@@ -82,9 +83,9 @@
         const cell=nodeAt(field.cell);if(cell)cell.firstChild.textContent=value||'—';
       }
     }
-    function reference(field){
+    function reference(field,old){
       const standard=el('td');standard.className='mapped-standard';
-      if(field.standard)standard.append(el('div',field.standard));
+      for(const [key,cellKey,label] of [['standard','standard_cell','Tiêu chuẩn kỹ thuật'],['method','method_cell','Phương pháp kiểm tra']]){if(!field[cellKey])continue;const text=el('textarea');text.value=old?.[key]??field[key]??'';text.maxLength=2000;text.rows=2;text.disabled=readonly;text.setAttribute('aria-label',field.name+' · '+label);text.oninput=()=>{const target=nodeAt(field[cellKey]);if(target)target.firstChild.textContent=text.value;};standard.append(el('small',label),text);standard[key+'Input']=text;}
       // Display order specifications alongside the approved standard, never infer tolerances.
       if(values.material_id||$('objectType').value==='NVL'){
         const name=field.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toLowerCase();
@@ -101,7 +102,7 @@
     }
     const table=el('table'),head=el('tr');for(const label of ['Tiêu chí','Tiêu chuẩn / đơn vị','Kết quả thực tế','Đánh giá','Ghi chú'])head.append(el('th',label));table.append(head);
     const inputs=[];
-    for(const field of entry.mapping.fields.filter(field=>field.kind==='INPUT')){
+    for(const field of entry.mapping.fields.filter(field=>['INPUT','INFO'].includes(field.kind))){
       const old=draft?.answers.find(answer=>answer.id===field.id),row=el('tr'),actual=el('input'),assessment=el('select'),note=el('textarea');
       actual.maxLength=2000;actual.value=old?.actual||'';actual.setAttribute('aria-label',field.name+' · kết quả');
       if(field.data_type==='number'){actual.type='number';actual.step='any';}else if(field.data_type==='date')actual.type='date';
@@ -109,20 +110,21 @@
       for(const [value,label] of [['','Chọn đánh giá'],['PASS','Đạt'],['FAIL','Không đạt'],['NA','Không áp dụng']]){const option=el('option',label);option.value=value;assessment.append(option);}
       assessment.value=old?.assessment||'';note.value=old?.note||'';note.maxLength=2000;
       note.placeholder=entry.note_cells?.[field.id]?.base||'';
-      actual.disabled=assessment.disabled=note.disabled=readonly;
+      actual.disabled=assessment.disabled=note.disabled=readonly;actual.required=field.kind==='INPUT'||!!field.required;
+      if(field.kind==='INFO'){assessment.hidden=note.hidden=true;assessment.disabled=true;}
       function reflect(){
-        actual.disabled=readonly||assessment.value==='NA';
+        actual.disabled=readonly||assessment.value==='NA';actual.required=(field.kind==='INPUT'||!!field.required)&&!actual.disabled;note.required=field.kind==='INPUT'&&assessment.value==='FAIL';
         if(nodeAt(field.cell))nodeAt(field.cell).firstChild.textContent=assessment.value==='NA'?'N/A':actual.value;
         if(field.assessment_cell&&nodeAt(field.assessment_cell))nodeAt(field.assessment_cell).firstChild.textContent=assessment.value;
         const target=entry.note_cells?.[field.id];
         if(target&&nodeAt(target.cell))nodeAt(target.cell).firstChild.textContent=note.value.trim();
       }
       assessment.onchange=()=>{if(assessment.value==='NA')actual.value='';reflect();};actual.oninput=note.oninput=reflect;reflect();
-      row.append(el('td',field.name+(field.required?' *':'')),reference(field));
+      const referenceCell=reference(field,old);row.append(el('td',field.name+((field.kind==='INPUT'||field.required)?' *':'')),referenceCell);
       for(const node of [actual,assessment,note]){const cell=el('td');cell.append(node);row.append(cell);}table.append(row);
-      inputs.push({field,actual,assessment,note});
+      inputs.push({field,actual,assessment,note,referenceCell});
     }
-    const wrap=el('div');wrap.className='table-wrap';wrap.append(table);modal.append(wrap,el('p','Chọn đánh giá theo kết quả kiểm tra. ERP không suy đoán dung sai; N/A không phải Đạt.'));
+    const wrap=el('div');wrap.className='table-wrap';wrap.append(table);modal.append(wrap,el('p','Chọn đánh giá theo kết quả kiểm tra. Kết quả bắt buộc với tiêu chí áp dụng; NG cần ghi chú/xử lý. Tiêu chuẩn, phương pháp và ghi chú dòng Đạt là tùy chọn. N/A không phải Đạt.'));
     const conclusion=el('select');for(const [value,label] of [['','Chọn kết luận'],['PASS','Đạt'],['FAIL','Không đạt'],...(readonly&&draft?.conclusion==='NA'?[['NA','N/A (hồ sơ lịch sử)']]:[])]){const option=el('option',label);option.value=value;conclusion.append(option);}
     conclusion.setAttribute('aria-label','Kết luận QC');conclusion.value=draft?.conclusion||'';conclusion.disabled=readonly;modal.append(el('p','Kết luận'),conclusion);
     const qcNote=el('textarea');qcNote.setAttribute('aria-label','Ghi chú phiếu QC');qcNote.rows=4;qcNote.maxLength=20000;qcNote.value=$('note').value;qcNote.disabled=readonly;
@@ -148,10 +150,12 @@
       try{
         if(!quantity.reportValidity())throw Error('Hãy nhập số lượng kiểm tra là số nguyên dương.');
         $('quantity').value=quantity.value;
-        const answers=inputs.map(({field,actual,assessment,note})=>{
-          if(field.required&&!assessment.value)throw Error('Cần đánh giá '+field.name);
-          if(field.required&&assessment.value!=='NA'&&!actual.value.trim())throw Error('Thiếu kết quả '+field.name);
-          return {id:field.id,actual:assessment.value==='NA'?'':actual.value.trim(),assessment:assessment.value||null,note:note.value.trim()};
+        const answers=inputs.map(({field,actual,assessment,note,referenceCell})=>{
+          if(field.kind==='INFO'){if(field.required&&!actual.value.trim())throw Error('Thiếu '+field.name);return {id:field.id,actual:actual.value.trim(),assessment:null,note:''};}
+          if(!assessment.value)throw Error('Cần đánh giá '+field.name);
+          if(assessment.value!=='NA'&&!actual.value.trim())throw Error('Thiếu kết quả '+field.name);
+          if(assessment.value==='FAIL'&&!note.value.trim())throw Error('Kết quả NG cần nhập Ghi chú & xử lý: '+field.name);
+          return {id:field.id,actual:assessment.value==='NA'?'':actual.value.trim(),assessment:assessment.value||null,note:note.value.trim(),standard:referenceCell.standardInput?.value??null,method:referenceCell.methodInput?.value??null};
         });
         const evaluations=answers.map(answer=>answer.assessment).filter(Boolean);
         if(!evaluations.some(value=>value==='PASS'||value==='FAIL'))throw Error('Cần ít nhất một tiêu chí Đạt hoặc Không đạt để kết luận.');

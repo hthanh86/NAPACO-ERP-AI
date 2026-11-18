@@ -69,15 +69,15 @@
           if (pending.textContent.includes('Nhật Ký Định Hình')) pending.replaceWith(link('Nhật ký định hình', '/production/forming', '✎'));
         }
       }
-      if (user.permissions.includes('PRODUCTION_EDIT')) (nav || sidebar).append(group('Kế hoạch', [['Định Hình','/production/schedule','▦'],['Bế Dán · Chưa triển khai','/production/be-dan','◫'],['Dữ liệu nền','/production/planning','⚙'],['Giờ làm / nghỉ mặc định','/production/calendar-settings','◷'],['Chuẩn bị nhựa','/production/materials','▤'],['Kiểm mẫu trước chạy','/production/samples','✓'],['Nhật ký định hình','/production/forming','✎'],['Lần chạy / nhật ký ca','/production/runs','▶']]));
+      if (user.permissions.includes('PRODUCTION_EDIT')) (nav || sidebar).append(group('Kế hoạch', [['Định Hình','/production/schedule','▦'],['Bế Dán · Chưa triển khai','/production/be-dan','◫'],['Dữ liệu nền','/production/planning','⚙'],['Giờ làm / nghỉ mặc định','/production/calendar-settings','◷'],['Chuẩn bị nhựa','/production/materials','▤'],['Nhật ký định hình','/production/forming','✎'],['Lần chạy / nhật ký ca','/production/runs','▶']]));
       const qcLinks = [];
-      if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Kiểm mẫu trước chạy','/production/samples','✓']);
+      if (['PRODUCTION_EDIT','QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Kiểm mẫu trước chạy','/production/samples','✓']);
       if (user.permissions.includes('QC_CREATE')) qcLinks.push(['Tạo Phiếu QC','/qc/create','+']);
       if (['QC_VIEW','QC_CREATE','QC_EDIT'].some(code => user.permissions.includes(code))) qcLinks.push(['Tạo Phiếu NCR/CAPA','/qc/ncr','◇']);
       if (user.permissions.includes('QC_VIEW')) qcLinks.push(['Danh sách QC','/qc/list','▤']);
       if (user.permissions.includes('QC_TEMPLATE_MANAGE')) qcLinks.push(['Quản lý Template QC','/qc/templates','▦']);
       if (qcLinks.length) {
-        const qc = el('details', '', 'erp-submenu'); qc.id = 'erpQcMenu'; qc.open = location.pathname.startsWith('/qc/');
+        const qc = el('details', '', 'erp-submenu'); qc.id = 'erpQcMenu'; qc.open = location.pathname.startsWith('/qc/') || location.pathname === '/production/samples';
         const summary = el('summary', '', 'erp-module-link erp-submenu-toggle');
         summary.append(el('span','✓','erp-module-icon'), el('span','QC'), el('span','','erp-submenu-chevron'));
         const children = el('div','','erp-submenu-links'); qcLinks.forEach(entry => children.append(link(...entry)));

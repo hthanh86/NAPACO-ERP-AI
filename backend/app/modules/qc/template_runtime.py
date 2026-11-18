@@ -125,7 +125,7 @@ def typed(value, kind, label):
 
 
 def normalized_answers(fields, entered, *, complete=True):
-    criteria = [field for field in fields if field['kind'] == 'INPUT']
+    criteria = [field for field in fields if field['kind'] in {'INPUT','INFO'}]
     answers = {answer.id:answer for answer in entered.answers}
     if len(answers) != len(entered.answers) or set(answers) != {field['id'] for field in criteria}:
         raise HTTPException(422, 'Danh sách tiêu chí bị thiếu, thừa hoặc trùng mã.')
@@ -133,18 +133,27 @@ def normalized_answers(fields, entered, *, complete=True):
     for field in criteria:
         answer = answers[field['id']]
         actual = answer.actual
+        if field['kind']=='INFO':
+            if answer.assessment is not None:raise HTTPException(422,'Thông tin lô không dùng đánh giá Đạt/Không đạt.')
+            if complete and field['required'] and not actual:raise HTTPException(422,'Thiếu thông tin: '+field['name'])
+            normalized.append({'id':answer.id,'actual':actual,'assessment':None,'note':''})
+            continue
         if answer.assessment is None:
-            if complete and (field['required'] or actual):
+            if complete:
                 raise HTTPException(422, 'Cần chọn đánh giá cho ' + field['name'])
         elif answer.assessment == 'NA':
             # Current QC policy permits skipping any criterion, including older mappings.
             actual = ''
         else:
-            if complete and field['required'] and not actual:
+            if complete and not actual:
                 raise HTTPException(422, 'Thiếu kết quả thực tế: ' + field['name'])
             if actual:
                 actual = typed(actual, field['data_type'], field['name'])
-        normalized.append({'id':answer.id, 'actual':actual, 'assessment':answer.assessment, 'note':answer.note})
+        if answer.assessment=='FAIL' and not answer.note.strip():
+            raise HTTPException(422,'Kết quả NG cần nhập Ghi chú & xử lý: '+field['name'])
+        normalized.append({'id':answer.id,'actual':actual,'assessment':answer.assessment,'note':answer.note,
+            'standard':answer.standard if answer.standard is not None else field.get('standard',''),
+            'method':answer.method if answer.method is not None else field.get('method','')})
         if answer.assessment:
             evaluations.append(answer.assessment)
     if complete and not any(value in {'PASS','FAIL'} for value in evaluations):
@@ -187,6 +196,8 @@ def filled(db, user, data, qc_id, lsx, existing=None):
         raise HTTPException(409,'Thông tin NVL/PO đã thay đổi sau khi xác nhận. Hãy tải lại và xác nhận nội dung trước khi lưu.')
     if not definition['mapping'].get('signature_cell'):
         raise HTTPException(422, 'Quản lý cần xác định và phê duyệt vị trí chữ ký trên template trước khi lưu.')
+    if len(definition['mapping'].get('signatures') or [])>1:
+        raise HTTPException(422,'Template nhiều người ký cần lập từ Nhật ký định hình → Bằng chứng QC để từng người xác nhận.')
     fields = definition['mapping']['fields']
     normalized, conclusion = normalized_answers(fields, entered)
     if entered.conclusion != conclusion or data.result != {'PASS':'OK','FAIL':'NG'}[conclusion]:
@@ -194,6 +205,7 @@ def filled(db, user, data, qc_id, lsx, existing=None):
     values.update(qc_id=qc_id, check_type=data.check_type, checked_at=serialized(data.checked_at),
                   quantity=serialized(data.quantity), staff_name=user.name,qc_note=data.note,
                   conclusion='Đạt' if conclusion=='PASS' else 'Không đạt',signer_name=user.name,signed_at=entered._signer['signed_at'])
+    values.update(mapping.assessment_summary(normalized))
     auto = {field['id']:str(values.get(field['source'], '')) for field in fields if field['kind'] == 'ERP'}
     missing = [field['name'] for field in fields if field['kind'] == 'ERP' and field['required'] and not auto[field['id']]]
     if missing:

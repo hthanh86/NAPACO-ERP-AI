@@ -72,14 +72,15 @@ def templates(identifier:str,check_type:Literal['QC ĐẦU CA','QC GIỮA CA','Q
 
 
 @router.get(PREFIX)
-def listing(q:str=Query('',max_length=200),setup_id:str=Query('',max_length=100),
+def listing(q:str=Query('',max_length=200),setup_id:str=Query('',max_length=100),journal_id:str=Query('',max_length=100),
         page:int=Query(1,ge=1),size:int=Query(25,ge=1,le=100),user=Depends(viewer),db=Depends(get_db)):
     ready(db)
-    query=select(QC.id,QC.object_id.label('setup_id'),QC.checked_at,QC.result,Run.official_code,
+    query=select(QC.id,QC.object_id.label('setup_id'),QC.check_type,QC.checked_at,QC.result,Run.official_code,
         QC.form_data[service.SAMPLE]['state'].as_string().label('state'),
         QC.form_data[service.SAMPLE]['decision'].as_string().label('decision')).join(Run,Run.id==QC.production_order_id)
     query=query.where(QC.form_data[service.SAMPLE]['version'].as_integer().is_not(None))
     if setup_id:query=query.where(QC.object_id==setup_id)
+    if journal_id:query=query.where(QC.form_data[service.SAMPLE]['journal_id'].as_string()==journal_id)
     if q:query=query.where(or_(QC.id.contains(q,autoescape=True),Run.official_code.contains(q,autoescape=True)))
     total=db.scalar(select(func.count()).select_from(query.subquery()))
     rows=db.execute(query.order_by(QC.checked_at.desc(),QC.id.desc()).offset((page-1)*size).limit(size)).mappings()

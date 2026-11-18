@@ -61,6 +61,8 @@ class MappedAnswer(BaseModel):
     actual: str = Field(default='', max_length=2000)
     assessment: Literal['PASS','FAIL','NA'] | None = None
     note: str = Field(default='', max_length=2000)
+    standard: str | None = Field(default=None,max_length=2000)
+    method: str | None = Field(default=None,max_length=2000)
 
 
 class MappedFormInput(BaseModel):

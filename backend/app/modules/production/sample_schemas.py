@@ -21,6 +21,7 @@ class EpisodeInput(SetupInput):
 
 
 class SampleDraft(Input):
+    journal_id: Key | None = None
     setup_id: Key
     version: int | None = Field(None,ge=1,strict=True)
     check_type: Literal['QC ĐẦU CA','QC GIỮA CA','QC CUỐI CA']='QC ĐẦU CA'
@@ -43,7 +44,7 @@ class SampleDraft(Input):
 
 
 class SampleSign(HandoverSign):
-    role: Literal['technical','qc']
+    role: Literal['technical','production_lead','qc']
 
 
 class SampleVersion(Input):

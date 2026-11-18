@@ -8,7 +8,7 @@ from app.core.paths import FRONTEND_ROOT
 from app.modules.materials.inventory.allocation_api import access,write,KeyHeader
 from app.modules.materials.inventory.handover_api import ready
 from app.modules.production.planning_models import Machine
-from app.modules.production.forming_schemas import FormingInput
+from app.modules.production.forming_schemas import FormingInput,EvidenceInput
 from app.modules.production import forming_service as service
 
 router=APIRouter()
@@ -66,3 +66,8 @@ def create(run_id:str,data:FormingInput,key:str=KeyHeader,user=Depends(access),d
 @router.put(PREFIX+'/runs/{run_id}/logs/{log_id}')
 def edit(run_id:str,log_id:str,data:FormingInput,key:str=KeyHeader,user=Depends(access),db=Depends(get_db)):
     ready(db);return write(db,user,'forming:edit:'+run_id+':'+log_id,data,key,lambda:service.save(db,user,run_id,data,log_id))
+
+
+@router.post(PREFIX+'/runs/{run_id}/evidence-context')
+def evidence_context(run_id:str,data:EvidenceInput,key:str=KeyHeader,user=Depends(access),db=Depends(get_db)):
+    ready(db);return write(db,user,'forming:evidence:'+run_id,data,key,lambda:service.evidence_context(db,user,run_id,data))
